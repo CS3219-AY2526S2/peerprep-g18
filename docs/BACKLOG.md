@@ -126,15 +126,15 @@
 
 > Elements in the UI Mock-up might be subjected to future changes.
 
-![Matching Page](docs/images/ui_mockup_1.png)
+![Matching Page](images/ui_mockup_1.png)
 
-![Matching Queue](docs/images/ui_mockup_2.png)
+![Matching Queue](images/ui_mockup_2.png)
 
-![Collaboration Space 1](docs/images/ui_mockup_3.png)
+![Collaboration Space 1](images/ui_mockup_3.png)
 
-![Collaboration Space 2](docs/images/ui_mockup_4.png)
+![Collaboration Space 2](images/ui_mockup_4.png)
 
-![Collaboration Space 3](docs/images/ui_mockup_5.png)
+![Collaboration Space 3](images/ui_mockup_5.png)
 
 ---
 

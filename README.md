@@ -12,7 +12,7 @@
 - M4: Collaboration - ***
 - M5: UI - Lee Jia Quan, Benny
 
-For more information regarding the Product Backlog, refer to [our documentation here](docs/PRODUCT_BACKLOG.md).
+For more information regarding the Product Backlog, refer to [our documentation here](docs/BACKLOG.md).
 
 ### Note: 
 - You are required to develop individual microservices within separate folders within this repository.

@@ -24,7 +24,7 @@ This UML.md is intended to capture the architecture and interaction diagrams tha
 ### 2.1.1 Component diagram (target)
 **Goal:** A high-level component diagram showing Front End + each microservice boundary and major dependencies, created for early planning during D1 phase.
 
-![Current system overview](docs/images/uml_1.png)
+![Current system overview](images/uml_1.png)
 > The current diagram is **NOT** the C4 Component Diagram for the project, but a high-level system overview. We will look to replace this where appropriate during future updates.
 
 ---
@@ -34,7 +34,7 @@ This UML.md is intended to capture the architecture and interaction diagrams tha
 ### 2.2.1 Regular user workflow (surface-level sequence)
 This diagram should show the primary “happy path” from login → selecting topic/difficulty → matching → collaboration session start.
 
-![Surface-level sequence: regular workflow](docs/images/uml_2.png)
+![Surface-level sequence: regular workflow](images/uml_2.png)
 
 ---
 

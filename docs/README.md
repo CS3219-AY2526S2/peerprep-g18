@@ -7,14 +7,14 @@ This `docs/` folder contains living documentation for our PeerPrep project (CS32
 
 ## Contents
 
-- [`BACKLOG.md`](docs/BACKLOG.md)
+- [`BACKLOG.md`](BACKLOG.md)
   Markdown-friendly product backlog that supports completion tracking via checkboxes and simple assignment metadata (Owner/Due/Done).  
   This aligns with the milestone requirement to develop requirements in the form of a product backlog.
 
-- [`UML.md`](docs/UML.md)
+- [`UML.md`](UML.md)
   Central place to track and maintain our UML diagrams (component/sequence diagrams), including allocated space for our current surface-level sequence diagrams (Question History integration + overall user workflow).
 
-- [`SCHEMA.md`](docs/SCHEMA.md)
+- [`SCHEMA.md`](SCHEMA.md)
   Planned database table schemas for selected microservices / features (e.g., User Service, Question Management, Question History).  
   Note: schemas may evolve as we finalize service boundaries and persistence decisions.
 
