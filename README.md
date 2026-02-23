@@ -1,6 +1,59 @@
 [![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/HpD0QZBI)
 # CS3219 Project (PeerPrep) - AY2526S2
-## Group: Gxx
+## Group: G18
+
+## Group Members:
+- [Lee Jia Quan, Benny](https://github.com/Shamanbenny)
+
+## Roles and Responsibilities:
+- M1: User Management - ***
+- M2: Peer Matching - ***
+- M3: Question Management - ***
+- M4: Collaboration - ***
+- M5: UI - Lee Jia Quan, Benny
+
+For more information regarding the Product Backlog, refer to [our documentation here](docs/BACKLOG.md).
+
+## Repo File Structure
+```
+peerprep-g18/
+  README.md
+  docs/
+    images/
+        ...
+    README.md
+    UML.md
+    SCHEMA.md
+    BACKLOG.md
+
+  frontend/
+    package.json
+    src/
+    .env.example
+    Dockerfile
+
+  backend/
+    services/
+      user-service/
+        README.md   (what it does, how to run)
+        src/
+        package.json
+        .env.example
+        Dockerfile
+      question-service/
+        ...
+      matching-service/
+        ...
+      collaboration-service/
+        ...
+      question-history-service/   (if implementing N2H as a service)
+        ...
+    libs/ (optional: shared types/utils; keep minimal to avoid coupling)
+
+  deploy/
+    compose.yaml (or docker-compose.yml)
+    nginx/ (optional, if you add reverse proxy later)
+```
 
 ### Note: 
 - You are required to develop individual microservices within separate folders within this repository.
