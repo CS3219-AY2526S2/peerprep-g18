@@ -14,6 +14,47 @@
 
 For more information regarding the Product Backlog, refer to [our documentation here](docs/BACKLOG.md).
 
+## Repo File Structure
+```
+peerprep-g18/
+  README.md
+  docs/
+    images/
+        ...
+    README.md
+    UML.md
+    SCHEMA.md
+    BACKLOG.md
+
+  frontend/
+    package.json
+    src/
+    .env.example
+    Dockerfile
+
+  backend/
+    services/
+      user-service/
+        README.md   (what it does, how to run)
+        src/
+        package.json
+        .env.example
+        Dockerfile
+      question-service/
+        ...
+      matching-service/
+        ...
+      collaboration-service/
+        ...
+      question-history-service/   (if implementing N2H as a service)
+        ...
+    libs/ (optional: shared types/utils; keep minimal to avoid coupling)
+
+  deploy/
+    compose.yaml (or docker-compose.yml)
+    nginx/ (optional, if you add reverse proxy later)
+```
+
 ### Note: 
 - You are required to develop individual microservices within separate folders within this repository.
 - The teaching team should be given access to the repositories, as we may require viewing the history of the repository in case of any disputes or disagreements. 
