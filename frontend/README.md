@@ -90,6 +90,13 @@ export default defineConfig([
 │
 ```
 
+3. Dependencies installed:
+```
+npm install lucide-react
+npm install -D tailwindcss@3 postcss autoprefixer
+npx tailwindcss init -p
+```
+
 ## Running the frontend
 
 ### Prerequisites
@@ -106,3 +113,20 @@ export default defineConfig([
 ### Optional (useful commands):
 - npm run build (creates a production build in `dist/`).
 - npm run preview (serves the built `dist/` locally for a quick check; not a production server).
+
+## Design & UI Credits
+
+This frontend’s UI layout and styling were derived from a Figma Make design file (used as a reference during implementation).
+
+> Note that the use of Figma Make is **solely** to help with the UI design component, but the major bulk of the application's interaction with the backend is created independently by our group.
+
+### Figma source
+- **Design file:** UI Design Analysis for PeerPrep
+- **Link:** [Figma Make link](https://www.figma.com/make/HeUvwSyEBHtYqdFQi6u4it/UI-Design-Analysis-for-PeerPrep?t=r06AvxC1qhZ9Yjg8-20&fullscreen=1)
+- **Author/Creator:** Lee Jia Quan, Benny
+- **Changes:** Implemented in React + TypeScript with Tailwind CSS; adapted components, spacing, and colors where needed.
+
+### Third-party components/assets
+- Some UI components in the design reference shadcn/ui (MIT License): https://ui.shadcn.com/ and https://github.com/shadcn-ui/ui/blob/main/LICENSE.md
+- Photos referenced in the design are from Unsplash (Unsplash License; attribution not required but appreciated): https://unsplash.com/license
+- Avatars used as profile pictures are from Avataaars (Free for personal and commercial use): https://avataaars.com/
