@@ -4,12 +4,16 @@
 
 ## Group Members:
 - [Lee Jia Quan, Benny](https://github.com/Shamanbenny)
+- Kannan Annamalai
+- Heng Yee Chong Fabian
+- Subramanian Pon Harish
+- Lee De En
 
 ## Roles and Responsibilities:
-- M1: User Management - ***
-- M2: Peer Matching - ***
-- M3: Question Management - ***
-- M4: Collaboration - ***
+- M1: User Management - Heng Yee Chong Fabian
+- M2: Peer Matching - Kannan Annamalai
+- M3: Question Management - Subramanian Pon Harish
+- M4: Collaboration - Lee De En
 - M5: UI - Lee Jia Quan, Benny
 
 For more information regarding the Product Backlog, refer to [our documentation here](docs/BACKLOG.md).
