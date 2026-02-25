@@ -26,7 +26,7 @@ export function MatchingPage({ criteria, onMatchFound, onTimeout, onCancel }: Ma
       const randomTopic = criteria.topics[Math.floor(Math.random() * criteria.topics.length)];
 
       onMatchFound({
-        id: `session-${Date.now()}`,
+        id: 'test-session-123',
         partner: mockPartner,
         question: {
           title: `${randomDifficulty.charAt(0).toUpperCase() + randomDifficulty.slice(1)} ${randomTopic} Problem`,
