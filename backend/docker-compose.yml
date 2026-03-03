@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  api-gateway:
+    build: 
+      context: ./api-gateway
+    container_name: api-gateway
+    ports:
+      - "1234:1234"
+    volumes:
+      - ./api-gateway:/app
+    depends_on:
+      - user-service
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+
+  user-service:
+    build: 
+      context: ./user-service
+    container_name: user-service
+    ports:
+      - "6767:6767" 
+    volumes:
+      - ./user-service:/app
+    env_file:
+      - ./user-service/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
