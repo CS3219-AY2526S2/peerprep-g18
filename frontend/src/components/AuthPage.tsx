@@ -8,14 +8,14 @@ interface AuthPageProps {
   onBack: () => void;
 }
 
-const GATEWAY_URL = 'http://localhost:1234';
+const GATEWAY_URL = 'http://localhost/api';
 
 export function AuthPage({ onLogin, onBack }: AuthPageProps) {
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [registrationSuccess, setRegistrationSuccess] = useState(false);
-  
+
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -57,8 +57,8 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
             const lookupRes = await fetch(`${GATEWAY_URL}/users/lookup/${loginEmail}`);
             if (!lookupRes.ok) throw new Error('Username not found');
             const data = await lookupRes.json();
-            
-            loginEmail = data.email; 
+
+            loginEmail = data.email;
           }
 
           const userCredential = await signInWithEmailAndPassword(auth, loginEmail, formData.password);
@@ -66,7 +66,7 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
 
           // EMAIL VERIFICATION CHECK
           if (!firebaseUser.emailVerified) {
-            await auth.signOut(); 
+            await auth.signOut();
             throw new Error('Please verify your email before logging in. Check your inbox!');
           }
 
@@ -76,7 +76,7 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
           const profileRes = await fetch(`${GATEWAY_URL}/users/${userCredential.user.uid}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
-          
+
           if (!profileRes.ok) throw new Error('Failed to fetch user profile');
           const profileData = await profileRes.json();
 
@@ -91,7 +91,7 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
 
         } else {
           // --- 2. REGISTRATION FLOW ---
-          const response = await fetch(`${GATEWAY_URL}/users/`, {
+          const response = await fetch(`${GATEWAY_URL}/users`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -249,8 +249,8 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
               </div>
             )}
 
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="btn-secondary w-full mt-6 flex justify-center items-center gap-2"
               disabled={isLoading}
             >

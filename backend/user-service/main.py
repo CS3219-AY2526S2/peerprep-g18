@@ -92,7 +92,7 @@ def send_verification_email(receiver_email: str, verification_link: str):
 # ENDPOINTS
 # =========================
 
-@app.post("/users/", response_model=UserResponse)
+@app.post("/users", response_model=UserResponse)
 def create_user(user: UserCreate):
     """
     Endpoint for User Creation.

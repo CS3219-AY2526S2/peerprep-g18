@@ -15,13 +15,13 @@ firebase_admin.initialize_app(cred)
 
 app = FastAPI(title="PeerPrep API Gateway")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 # ==========================================
 # MICROSERVICE ROUTING TABLE
@@ -30,15 +30,15 @@ app.add_middleware(
 # When running locally, use localhost. In Docker Compose later, use container names.
 SERVICES = {
     "users": "http://user-service:6767",
-    "collab": "http://collab-service:4000",
+    "collab": "http://collab-service:4000"
     # "questions": "http://localhost:6768",
     # "matching": "http://localhost:6769",
 }
 
 # Routes that DO NOT require authentication (e.g., login, registration)
 PUBLIC_ROUTES = [
-    ("POST", "/users/"),
-    ("GET", "/users/lookup/")
+    ("POST", "/users"),
+    ("GET", "/users/lookup")
 ]
 
 async def verify_token(request: Request):

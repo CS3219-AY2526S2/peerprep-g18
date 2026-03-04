@@ -27,38 +27,34 @@ export function CollaborationPage({ user, session, onEndSession }: Collaboration
 
   const questionMarkdown = `## Problem Description\n\n${session.question.description}\n\n### Constraints\n- Time complexity: O(n)\n- Space complexity: O(1) preferred\n\n### Example\nInput: [1, 2, 3, 4, 5]\nOutput: [result]\n\n### Hints\n1. Consider using a two-pointer approach\n2. Edge cases: empty arrays, single elements`;
 
-  // --- 1. CONNECT TO BACKEND ---
+  // --- 1. CONNECT TO BACKEND VIA NGINX ---
   useEffect(() => {
-    // Connect to the Docker container
-    const newSocket = io('http://localhost:4000');
+    // We point to Port 80 (Nginx). Nginx handles the path '/socket.io/' 
+    // and forwards it to the Node.js container internally.
+    const newSocket = io('http://localhost', {
+      path: '/socket.io/',
+      transports: ['websocket'],
+      auth: {
+        token: user.accessToken // Assuming user object has the Firebase JWT
+      }
+    });
+
     setSocket(newSocket);
 
-    // Join the specific match session
-    newSocket.emit('join-session', { 
-      sessionId: session.id, 
-      username: user.username 
+    newSocket.on('connect', () => {
+      newSocket.emit('join-session', {
+        sessionId: session.id,
+        username: user.username
+      });
     });
 
-    // Listen for partner's code changes
-    newSocket.on('code-update', (newCode: string) => {
-      setCode(newCode);
-    });
-
-    // Listen for partner's chat messages
-    newSocket.on('receive-message', (msg: any) => {
-      setMessages((prev) => [...prev, msg]);
-    });
+    newSocket.on('code-update', (newCode: string) => setCode(newCode));
+    newSocket.on('receive-message', (msg: any) => setMessages((prev) => [...prev, msg]));
 
     return () => {
       newSocket.disconnect();
     };
   }, [session.id, user.username]);
-
-  // Session Timer
-  useEffect(() => {
-    const timer = setInterval(() => setSessionTime((prev) => prev + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -116,7 +112,7 @@ export function CollaborationPage({ user, session, onEndSession }: Collaboration
   const renderMarkdown = (text: string) => {
     const lines = text.split('\n');
     let inHintsSection = false;
-    
+
     return lines.map((line, i) => {
       if (line.startsWith('### Hints')) {
         inHintsSection = true;
@@ -139,7 +135,7 @@ export function CollaborationPage({ user, session, onEndSession }: Collaboration
         return null;
       }
       if (line.startsWith('###') && !line.startsWith('### Hints')) inHintsSection = false;
-      
+
       if (line.startsWith('## ')) return <h2 key={i} className="text-xl font-bold mt-4 mb-2">{line.replace('## ', '')}</h2>;
       if (line.startsWith('### ')) return <h3 key={i} className="text-lg font-semibold mt-3 mb-2">{line.replace('### ', '')}</h3>;
       if (line.match(/^\d+\./)) return <li key={i} className="ml-4 mb-1">{line}</li>;
@@ -206,7 +202,7 @@ export function CollaborationPage({ user, session, onEndSession }: Collaboration
               <div className="bg-[#1e1e1e] rounded-xl p-4 min-h-[400px] syntax-highlight">
                 <textarea
                   value={code}
-                  onChange={handleCodeChange} 
+                  onChange={handleCodeChange}
                   className="w-full h-[380px] bg-transparent text-white font-mono text-sm resize-none focus:outline-none"
                   spellCheck={false}
                   placeholder="// Start coding here..."
