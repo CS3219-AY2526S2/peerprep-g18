@@ -1,0 +1,44 @@
+# =========================
+# CRITICAL SECURITY FILES
+# =========================
+# Firebase admin credentials
+firebase-questionservice.json
+
+# Environment Variables (if you use them later for other secrets)
+.env
+.env.local
+
+# =========================
+# Python & FastAPI
+# =========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# Pytest / Coverage (if you do automated testing for CI/CD)
+.pytest_cache/
+.coverage
+htmlcov/
+
+# =========================
+# Template / Build Files
+# =========================
+questions.json
+firebase_data_init.py
+
+# =========================
+# OS & IDE Files
+# =========================
+# Mac
+.DS_Store
+
+# VS Code / PyCharm
+.vscode/
+.idea/
