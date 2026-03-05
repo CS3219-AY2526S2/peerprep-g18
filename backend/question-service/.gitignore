@@ -32,6 +32,7 @@ htmlcov/
 # =========================
 questions.json
 firebase_data_init.py
+firebase_db_test.py
 
 # =========================
 # OS & IDE Files
