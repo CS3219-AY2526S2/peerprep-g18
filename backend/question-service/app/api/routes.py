@@ -1,10 +1,12 @@
-from fastapi import APIRouter, HTTPException, Header, status, Query
-from typing import List, Optional
-from app.models.domain import Question, QuestionCreate, QuestionUpdate
-from google.cloud.firestore_v1.base_query import FieldFilter
-from google.cloud import firestore
-from app.database import db
 import random
+from typing import List, Optional
+
+from fastapi import APIRouter, Header, HTTPException, Query, status
+from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
+
+from app.database import db
+from app.models.domain import Question, QuestionCreate, QuestionUpdate
 
 router = APIRouter()
 
