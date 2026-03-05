@@ -1,0 +1,169 @@
+from fastapi import APIRouter, HTTPException, Header, status, Query
+from typing import List, Optional
+from app.models.domain import Question, QuestionCreate, QuestionUpdate
+from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud import firestore
+from app.database import db
+import random
+
+router = APIRouter()
+
+# An internal function to check admin privileges based on the X-User-Role header
+# The role is checked before allowing access to create, update, or delete operations
+def verify_admin(x_user_role: Optional[str]):
+    if x_user_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Admin privileges required"
+        )
+
+# Get a random question based on a given topic and difficulty level
+@router.get("/", response_model=Question)
+async def read_questions(
+    topic: str, 
+    difficulty: str
+):
+    topic = topic.strip().capitalize()
+    difficulty = difficulty.strip().capitalize()
+    
+    questions_ref = db.collection("questions")
+    query = questions_ref.where(
+        filter=FieldFilter("topic", "==", topic)
+    ).where(
+        filter=FieldFilter("difficulty", "==", difficulty)
+    )
+
+    # fetch only the document IDs
+    docs = query.select([]).stream()
+
+    if not docs:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"No questions found for {topic} with {difficulty} difficulty"
+        )
+
+    doc_ids = [doc.id for doc in docs]
+    randomQuestion_id = random.choice(doc_ids)
+
+    # Fetch the question
+    doc_ref = questions_ref.document(randomQuestion_id)
+    doc = doc_ref.get()
+
+    question_data = doc.to_dict()
+    
+    # Add the document ID to the returned data for consistency with the Question model
+    question_data["question_id"] = doc.id
+
+    return question_data
+
+@router.get("/brew", status_code=418)
+async def brew():
+    return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
+
+# Get specific question by ID
+# This endpoint is expected to be used by question-history service to fetch question details for a given question_id.
+@router.get("/{question_id}", response_model=Question)
+async def read_question(question_id: str):
+    questions_ref = db.collection("questions")
+
+    # Fetch the question
+    doc_ref = questions_ref.document(question_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Question not found with ID: {question_id}"
+        )
+
+    question_data = doc.to_dict()
+    
+    # Add the document ID to the returned data for consistency with the Question model
+    question_data["question_id"] = doc.id
+
+    return question_data
+
+
+# --- ADMIN ENDPOINTS ---
+
+# To add a new question to the database.
+@router.post("/", response_model=Question, status_code=status.HTTP_201_CREATED)
+async def create_question(
+    question: QuestionCreate, 
+    x_user_role: str = Header(...)
+):
+    x_user_role = x_user_role.strip().lower()
+    verify_admin(x_user_role)
+
+    questions_ref = db.collection("questions")
+    doc_ref = questions_ref.order_by("question_id", direction=firestore.Query.DESCENDING).limit(1)
+    doc = doc_ref.get()
+    question_id = int(doc[0].to_dict().get("question_id"))+1 if doc else 1
+
+    question_dict = question.model_dump()
+    question_dict["topic"] = question_dict["topic"].strip().capitalize()
+    question_dict["difficulty"] = question_dict["difficulty"].strip().capitalize()
+
+    
+
+    new_question = {**question_dict, "question_id": str(question_id)}
+
+    # Save to Firestore
+    questions_ref.document(str(question_id)).set(new_question, merge=True)
+    
+    return new_question
+
+# To update an existing question.
+@router.put("/{question_id}", response_model=Question)
+async def update_question(
+    question_id: str, 
+    question_update: QuestionUpdate, 
+    x_user_role: Optional[str] = Header(None)
+):
+    x_user_role = x_user_role.strip().lower()
+    verify_admin(x_user_role)
+
+    doc_ref = db.collection("questions").document(question_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Question with ID {question_id} not found"
+        )
+
+    update_data = question_update.model_dump(exclude_unset=True)
+
+    # Normalize topic and difficulty if they are being updated
+    if "topic" in update_data:
+        update_data["topic"] = update_data["topic"].strip().capitalize()
+    if "difficulty" in update_data:
+        update_data["difficulty"] = update_data["difficulty"].strip().capitalize()
+
+    doc_ref.update(update_data)
+
+    updated_doc = doc_ref.get().to_dict()
+    return updated_doc
+
+
+# To delete a question from the database.
+@router.delete("/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_question(
+    question_id: str, 
+    x_user_role: Optional[str] = Header(None)
+):
+    x_user_role = x_user_role.strip().lower()
+    verify_admin(x_user_role)
+
+    doc_ref = db.collection("questions").document(question_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Question with ID {question_id} not found"
+        )
+    doc_ref.delete()
+
+    return None
+
