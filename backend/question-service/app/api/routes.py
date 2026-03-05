@@ -23,8 +23,8 @@ async def read_questions(
     topic: str, 
     difficulty: str
 ):
-    topic = topic.strip().capitalize()
-    difficulty = difficulty.strip().capitalize()
+    topic = topic.strip().title()
+    difficulty = difficulty.strip().title()
     
     questions_ref = db.collection("questions")
     query = questions_ref.where(
@@ -35,14 +35,15 @@ async def read_questions(
 
     # fetch only the document IDs
     docs = query.select([]).stream()
+    doc_ids = [doc.id for doc in docs]
 
-    if not docs:
+    if not doc_ids:
         raise HTTPException(
             status_code=404, 
             detail=f"No questions found for {topic} with {difficulty} difficulty"
         )
 
-    doc_ids = [doc.id for doc in docs]
+    
     randomQuestion_id = random.choice(doc_ids)
 
     # Fetch the question
@@ -55,6 +56,7 @@ async def read_questions(
     question_data["question_id"] = doc.id
 
     return question_data
+    
 
 @router.get("/brew", status_code=418)
 async def brew():
@@ -101,8 +103,8 @@ async def create_question(
     question_id = int(doc[0].to_dict().get("question_id"))+1 if doc else 1
 
     question_dict = question.model_dump()
-    question_dict["topic"] = question_dict["topic"].strip().capitalize()
-    question_dict["difficulty"] = question_dict["difficulty"].strip().capitalize()
+    question_dict["topic"] = question_dict["topic"].strip().title()
+    question_dict["difficulty"] = question_dict["difficulty"].strip().title()
 
     
 
@@ -136,9 +138,9 @@ async def update_question(
 
     # Normalize topic and difficulty if they are being updated
     if "topic" in update_data:
-        update_data["topic"] = update_data["topic"].strip().capitalize()
+        update_data["topic"] = update_data["topic"].strip().title()
     if "difficulty" in update_data:
-        update_data["difficulty"] = update_data["difficulty"].strip().capitalize()
+        update_data["difficulty"] = update_data["difficulty"].strip().title()
 
     doc_ref.update(update_data)
 
