@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # The Front Door (Public)
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gateway
+      - collab-service
+    restart: always
+
+  # The Bouncer (Internal)
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    expose:
+      - "1234"
+    volumes:
+      - ./api-gateway:/app
+    depends_on:
+      - user-service
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  # The Librarian (Internal)
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    expose:
+      - "6767"
+    volumes:
+      - ./user-service:/app
+    env_file:
+      - ./user-service/.env # Contains SMTP_EMAIL and SMTP_PASSWORD
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  collab-service:
+      build: ./collaboration-service
+      container_name: collab-service
+      expose:
+        - "4000"
+      volumes:
+        - ./collaboration-service:/app
+        - /app/node_modules  # <--- CRITICAL: Protects the installed packages
