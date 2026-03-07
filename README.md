@@ -24,41 +24,55 @@ For more information regarding the Product Backlog, refer to [our documentation 
 ```
 peerprep-g18/
   README.md
+  LICENSE
   docs/
     images/
-        ...
+      ...
     README.md
     UML.md
     SCHEMA.md
     BACKLOG.md
 
   frontend/
-    package.json
     src/
-    .env.example
-    Dockerfile
+      App.tsx     (handles page routing)
+      components/
+        ui/
+          ...     (individual React elements used across pages)
+        ...       (the individual pages)
+    README.md
+    Dockerfile    (TODO...)
 
   backend/
-    services/
-      user-service/
-        README.md   (what it does, how to run)
-        src/
-        package.json
-        .env.example
-        Dockerfile
-      question-service/
-        ...
-      matching-service/
-        ...
-      collaboration-service/
-        ...
-      question-history-service/   (if implementing N2H as a service)
-        ...
-    libs/ (optional: shared types/utils; keep minimal to avoid coupling)
-
-  deploy/
-    compose.yaml (or docker-compose.yml)
-    nginx/ (optional, if you add reverse proxy later)
+    docker-compose.yml
+    nginx.conf
+    api-gateway/
+      main.py
+      requirements.txt
+      Dockerfile
+      firebase-service-account.json   (.gitignore but needed to run locally)
+    user-service/
+      main.py
+      requirements.txt
+      Dockerfile
+      firebase-service-account.json   (.gitignore but needed to run locally)
+      .env                            (.gitignore but needed to run locally)
+    question-service/
+      app/
+        main.py
+        database.py
+        api/
+          routes.py
+        models/
+          domain.py
+      requirements.txt
+      Dockerfile
+      firebase-questionservice.json   (.gitignore but needed to run locally)
+    matching-service/
+      ...
+    collaboration-service/
+      server.js
+      Dockerfile
 ```
 
 ---
@@ -91,9 +105,11 @@ peerprep-g18/
    docker-compose up --build
    ```
    - Nginx will be accessible at http://localhost:80.
-   - API Gateway (Internal) handles routing to services like /api/users/.
-   - User Service manages profile data in Firestore.
-   - Collaboration Service (Internal) manages real-time sockets on port 4000.
+   - API Gateway (Internal) handles routing on port `1234` to each micro-services.
+   - User Service manages profile data in Firestore on port `6767`.
+   - Question Service manages question data in Firestore on port `6768`.
+   - Matching Service manages event-based user matching on port `6769`.
+   - Collaboration Service (Internal) manages real-time sockets on port `4000`.
 
 ### 3. Running the Frontend
   The frontend is a React application built with Vite.
