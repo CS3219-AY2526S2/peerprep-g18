@@ -48,3 +48,27 @@ services:
       volumes:
         - ./collaboration-service:/app
         - /app/node_modules  # <--- CRITICAL: Protects the installed packages
+  
+  matching-service:
+    build: ./matching-service
+    container_name: matching-service
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000" # For debugging, TO REMOVE
+    volumes:
+      - ./matching-service:/app
+    depends_on:
+      - redis
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+  
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    expose:
+      - "6379"
+    ports:
+      - "6379:6379" # For debugging, TO REMOVE
