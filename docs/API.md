@@ -77,22 +77,22 @@ Permanently delete a user's identity and profile.
 
 ### Endpoints
 
-#### `GET /questions`
-Retrieve a random question based on topic and difficulty.
+#### `GET /question`
+Retrieve a random question ID based on topic and difficulty.
 - **Query Parameters:**
   - `topic`: (Required) e.g., "Array", "String"
   - `difficulty`: (Required) e.g., "Easy", "Medium", "Hard"
 - **Responses:**
-  - `200 OK`: Returns a random question_id matching the criteria.
+  - `200 OK`: `{"question_id": "string"}`
   - `404 Not Found`: No questions match the criteria.
 
-#### `GET /questions/{question_id}`
+#### `GET /question/{question_id}`
 Retrieve a specific question by its ID.
 - **Responses:**
   - `200 OK`: Returns the question details.
   - `404 Not Found`: Question ID does not exist.
 
-#### `POST /questions` (Admin Only)
+#### `POST /question` (Admin Only)
 Add a new question to the repository.
 - **Headers:**
   - `X-User-Role`: (Required) Must be `"admin"`.
@@ -111,7 +111,7 @@ Add a new question to the repository.
   - `201 Created`: Question added successfully.
   - `403 Forbidden`: Not an admin.
 
-#### `PUT /questions/{question_id}` (Admin Only)
+#### `PUT /question/{question_id}` (Admin Only)
 Update an existing question.
 - **Headers:**
   - `X-User-Role`: (Required) Must be `"admin"`.
@@ -121,7 +121,7 @@ Update an existing question.
   - `403 Forbidden`: Not an admin.
   - `404 Not Found`: Question does not exist.
 
-#### `DELETE /questions/{question_id}` (Admin Only)
+#### `DELETE /question/{question_id}` (Admin Only)
 Remove a question from the repository.
 - **Headers:**
   - `X-User-Role`: (Required) Must be `"admin"`.

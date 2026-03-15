@@ -30,9 +30,9 @@ app = FastAPI(title="PeerPrep API Gateway")
 # When running locally, use localhost. In Docker Compose later, use container names.
 SERVICES = {
     "users": "http://user-service:6767",
-    "collab": "http://collab-service:4000"
-    # "questions": "http://localhost:6768",
-    # "matching": "http://localhost:6769",
+    "question": "http://question-service:6768",
+    # "matching": "http://matching-service:6769",
+    "collab": "http://collab-service:4000",
 }
 
 # Routes that DO NOT require authentication (e.g., login, registration)
@@ -50,16 +50,16 @@ async def verify_token(request: Request):
     token = auth_header.split(" ")[1]
     try:
         decoded_token = auth.verify_id_token(token)
-
-        if not decoded_token.get("email_verified"):
-            raise HTTPException(
-                status_code=403, 
-                detail="Email not verified. Please check your inbox."
-            )
-        
-        return decoded_token
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+
+    if not decoded_token.get("email_verified"):
+        raise HTTPException(
+            status_code=403, 
+            detail="Email not verified. Please check your inbox."
+        )
+    
+    return decoded_token
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def gateway_proxy(request: Request, path: str):

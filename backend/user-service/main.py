@@ -96,11 +96,14 @@ def send_verification_email(receiver_email: str, verification_link: str):
 def create_user(user: UserCreate):
     """
     Endpoint for User Creation.
-    Checks for unique username in Firestore, creates user in Firebase Auth,
+    Checks for unique username (case-insensitive) in Firestore, creates user in Firebase Auth,
     generates email verification link, and stores profile data in Firestore.
     """
     users_ref = db.collection('Users')
-    username_query = users_ref.where('username', '==', user.username).stream()
+    username_lower = user.username.lower()
+    
+    # Case-insensitive uniqueness check using username_lower field
+    username_query = users_ref.where('username_lower', '==', username_lower).stream()
     if any(username_query):
         raise HTTPException(status_code=400, detail="Username already exists")
 
@@ -123,6 +126,7 @@ def create_user(user: UserCreate):
     user_data = {
         "user_id": user_record.uid,
         "username": user.username,
+        "username_lower": username_lower,
         "email": user.email,
         "avatar_id": user.avatar_id,
         "role": user.role
@@ -149,11 +153,10 @@ def get_user(user_id: str):
 @app.get("/users/lookup/{username}")
 def lookup_email_by_username(username: str):
     """
-    Helper endpoint for looking up a user's email by their username.
-    Used during login to allow users to enter either their email or username.
+    Helper endpoint for looking up a user's email by their username (case-insensitive).
     """
     users_ref = db.collection('Users')
-    username_query = users_ref.where('username', '==', username).stream()
+    username_query = users_ref.where('username_lower', '==', username.lower()).stream()
     
     for doc in username_query:
         return {"email": doc.to_dict().get("email")}
@@ -164,8 +167,7 @@ def lookup_email_by_username(username: str):
 def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(...)):
     """
     Helper endpoint for updating user profile data.
-    Checks if the authenticated user matches the user_id being updated, then
-    handles password changes via Firebase Auth and updates other profile fields in Firestore.
+    Ensures case-insensitive username uniqueness on update.
     """
     if x_user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to edit this profile")
@@ -178,15 +180,16 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
     
     update_dict = {}
 
-    # Check for lowercase 'username' in update_data
     if update_data.username:
         users_ref = db.collection('Users')
-        # Query lowercase 'username' in Firestore
-        username_query = users_ref.where('username', '==', update_data.username).stream()
+        username_lower = update_data.username.lower()
+        # Query case-insensitive using username_lower
+        username_query = users_ref.where('username_lower', '==', username_lower).stream()
         for u in username_query:
             if u.id != user_id:
                 raise HTTPException(status_code=400, detail="Username already exists")
         update_dict['username'] = update_data.username
+        update_dict['username_lower'] = username_lower
 
     # Check for lowercase 'avatar_id'
     if update_data.avatar_id is not None:
