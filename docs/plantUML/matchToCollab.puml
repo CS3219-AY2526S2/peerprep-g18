@@ -1,0 +1,81 @@
+@startuml
+autonumber
+skinparam Style strictuml
+skinparam MaxMessageSize 250
+skinparam ParticipantPadding 20
+
+actor "User A" as UA
+actor "User B" as UB
+participant "Nginx" as NX
+box "API Gateway (Orchestrator)" #LightYellow
+    participant "Gateway A" as GWA
+    participant "Gateway B" as GWB
+end box
+participant "Matching Service" as MS
+participant "Question Service" as QS
+participant "Editor Service" as ES
+participant "Chat Service" as CS
+database "Redis (Pub/Sub & State)" as RD
+
+== Phase 1: Generic Matching ==
+
+UA -> NX: POST /api/matching/find-pair (criteria_1_opts, criteria_2_opts, JWT)
+NX -> GWA: Forward Request
+GWA -> GWA: Auth: Verify JWT A
+GWA -> MS: POST /find-pair (uid_A, criteria_1_opts, criteria_2_opts)
+
+... Both users queue ...
+
+MS -> RD: PUBLISH match_events {uid_A, uid_B, crit_1, crit_2}
+
+== Phase 2: Distributed Session Initialization ==
+
+RD -->> GWA: [Message Received]
+RD -->> GWB: [Message Received]
+
+GWA -> GWA: Generate sessionId_A
+GWB -> GWB: Generate sessionId_B
+
+note over GWA, GWB: Atomic Race: The first sessionId to reach Redis becomes the shared session ID, and the Gateway that obtains the lock becomes the leader.
+
+GWA -> RD: SETNX lock:match:A:B sessionId_A
+GWB -> RD: SETNX lock:match:A:B sessionId_B
+
+RD --> GWA: 1 (Leader)
+RD --> GWB: 0 (Follower)
+
+group Leader Logic (GWA)
+    GWA -> QS: GET /questions?topic=crit_1&diff=crit_2
+    QS --> GWA: {qid: "q_101", ...}
+    GWA -> RD: SET session:sessionId_A:meta {"users": ["A", "B"], "qid": "q_101"}
+    GWA -> RD: SET session:sessionId_A:editor {"code": "", "version": 0}
+    GWA -->> UA: [Notify] Match Found! {sessionId: sessionId_A}
+end
+
+group Follower Logic (GWB)
+    GWB -> RD: GET lock:match:A:B
+    RD --> GWB: sessionId_A (Follower retrieves winning ID)
+    GWB -> RD: WAIT/POLL for session:sessionId_A:meta
+    GWB -->> UB: [Notify] Match Found! {sessionId: sessionId_A}
+end
+
+== Phase 3: Specialized Collaborative Sessions ==
+
+UA -> NX: WS Connect /socket.io/editor?sessionId=sessionId_A
+NX -> GWA: Forward Upgrade
+GWA -> ES: Proxy WS Upgrade (Headers: X-User-Id: uid_A)
+
+UA -> NX: WS Connect /socket.io/chat?sessionId=sessionId_A
+NX -> GWA: Forward Upgrade
+GWA -> CS: Proxy WS Upgrade (Headers: X-User-Id: uid_A)
+
+== Phase 4: Independent Real-time Sync ==
+
+UA -> ES: WS Message: code_change (Delta)
+ES -> RD: Update session:sessionId_A:editor
+ES -> UB: Broadcast code_update
+
+UA -> CS: WS Message: send_message ("Hello!")
+CS -> RD: LPUSH session:sessionId_A:chat_history
+CS -> UB: Broadcast receive_message
+@enduml

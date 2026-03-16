@@ -5,7 +5,7 @@
 
 import os
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, EmailStr, Field, model_validator
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
@@ -14,9 +14,6 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi import Depends
-
 # Initialize Firebase Admin
 cred = credentials.Certificate("firebase-service-account.json")
 firebase_admin.initialize_app(cred)
@@ -24,59 +21,46 @@ db = firestore.client()
 
 app = FastAPI(title="PeerPrep User Service (Firebase Auth Version)")
 
-security = HTTPBearer()
-
 # =========================
 # SCHEMAS
 # =========================
 
 class UserCreate(BaseModel):
-    Username: str
-    Email: EmailStr
-    Password: str
-    ConfirmPassword: str
-    AvatarID: int = 1
-    Role: str = Field(default="User", description="RBAC Role (e.g., Admin, User)")
+    username: str
+    email: EmailStr
+    password: str
+    confirm_password: str
+    avatar_id: int = 1
+    role: str = Field(default="User", description="RBAC Role (e.g., Admin, User)")
 
     @model_validator(mode='after')
     def check_passwords_match(self) -> 'UserCreate':
-        if self.Password != self.ConfirmPassword:
+        if self.password != self.confirm_password:
             raise ValueError('Passwords do not match')
         return self
 
 class UserUpdate(BaseModel):
-    Username: Optional[str] = None
-    Password: Optional[str] = None
-    ConfirmPassword: Optional[str] = None
-    AvatarID: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    confirm_password: Optional[str] = None
+    avatar_id: Optional[int] = None
 
     @model_validator(mode='after')
     def check_passwords_match(self) -> 'UserUpdate':
-        if self.Password is not None and self.Password != self.ConfirmPassword:
+        if self.password is not None and self.password != self.confirm_password:
             raise ValueError('Passwords do not match')
         return self
 
 class UserResponse(BaseModel):
-    UserID: str
-    Username: str
-    Email: EmailStr
-    AvatarID: int
-    Role: str
+    user_id: str
+    username: str
+    email: EmailStr
+    avatar_id: int
+    role: str
 
 # =========================
 # HELPER FUNCTIONS
 # =========================
-
-def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """
-    The Bouncer: Intercepts the request, extracts the JWT, and asks Firebase if it is valid.
-    """
-    token = credentials.credentials
-    try:
-        decoded_token = auth.verify_id_token(token)
-        return decoded_token
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)}")
 
 def send_verification_email(receiver_email: str, verification_link: str):
     """F1.1: Helper function to send an email using Gmail's SMTP server."""
@@ -96,9 +80,7 @@ def send_verification_email(receiver_email: str, verification_link: str):
     msg.attach(MIMEText(body, 'plain'))
 
     try:
-        # Connect to Gmail's SMTP server
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls() # Secure the connection
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(sender_email, sender_password)
         server.send_message(msg)
         server.quit()
@@ -110,26 +92,31 @@ def send_verification_email(receiver_email: str, verification_link: str):
 # ENDPOINTS
 # =========================
 
-@app.post("/users/", response_model=UserResponse)
+@app.post("/users", response_model=UserResponse)
 def create_user(user: UserCreate):
     """
     Endpoint for User Creation.
-    Checks for unique username in Firestore, creates user in Firebase Auth,
-    generates email verification link, and stores profile data in Firestore.
+    Checks for unique username (case-insensitive) by streaming and filtering in the backend.
     """
     users_ref = db.collection('Users')
-    username_query = users_ref.where('Username', '==', user.Username).stream()
-    if any(username_query):
-        raise HTTPException(status_code=400, detail="Username already exists")
+    target_username = user.username.lower()
+    
+    # Manual backend-side case-insensitive check
+    all_users = users_ref.stream()
+    for doc in all_users:
+        existing_user = doc.to_dict()
+        if existing_user.get('username', '').lower() == target_username:
+            raise HTTPException(status_code=400, detail="Username already exists")
 
     try:
         user_record = auth.create_user(
-            email=user.Email,
-            password=user.Password
+            email=user.email,
+            password=user.password
         )
+        auth.set_custom_user_claims(user_record.uid, {'role': user.role})
         
-        verification_link = auth.generate_email_verification_link(user.Email)
-        send_verification_email(user.Email, verification_link)
+        verification_link = auth.generate_email_verification_link(user.email)
+        send_verification_email(user.email, verification_link)
 
     except auth.EmailAlreadyExistsError:
         raise HTTPException(status_code=400, detail="Email already exists in Firebase Auth")
@@ -137,11 +124,11 @@ def create_user(user: UserCreate):
         raise HTTPException(status_code=500, detail=f"Firebase Auth Error: {str(e)}")
 
     user_data = {
-        "UserID": user_record.uid,
-        "Username": user.Username,
-        "Email": user.Email,
-        "AvatarID": user.AvatarID,
-        "Role": user.Role
+        "user_id": user_record.uid,
+        "username": user.username,
+        "email": user.email,
+        "avatar_id": user.avatar_id,
+        "role": user.role
     }
     
     db.collection('Users').document(user_record.uid).set(user_data)
@@ -152,7 +139,6 @@ def create_user(user: UserCreate):
 def get_user(user_id: str):
     """
     Endpoint for retrieving user profile data.
-    Fetches user data from Firestore based on UserID.
     """
     doc_ref = db.collection('Users').document(user_id)
     doc = doc_ref.get()
@@ -165,26 +151,26 @@ def get_user(user_id: str):
 @app.get("/users/lookup/{username}")
 def lookup_email_by_username(username: str):
     """
-    Helper endpoint for Username Login.
-    The frontend sends the username here, gets the email back, 
-    and then uses that email to authenticate with Firebase Auth.
+    Helper endpoint for looking up email (case-insensitive) via backend filtering.
     """
     users_ref = db.collection('Users')
-    username_query = users_ref.where('Username', '==', username).stream()
+    target_username = username.lower()
     
-    for doc in username_query:
-        return {"Email": doc.to_dict().get("Email")}
+    all_users = users_ref.stream()
+    for doc in all_users:
+        user_data = doc.to_dict()
+        if user_data.get('username', '').lower() == target_username:
+            return {"email": user_data.get("email")}
         
     raise HTTPException(status_code=404, detail="Username not found")
 
 @app.patch("/users/{user_id}")
-def update_user(user_id: str, update_data: UserUpdate, token: dict = Depends(verify_firebase_token)):
+def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(...)):
     """
-    Helper endpoint for updating user profile data.
-    Checks if the authenticated user matches the user_id being updated, then
-    handles password changes via Firebase Auth and updates other profile fields in Firestore.
+    Endpoint for updating user profile.
+    Performs case-insensitive uniqueness check in backend if username is changing.
     """
-    if token.get("uid") != user_id:
+    if x_user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to edit this profile")
     
     doc_ref = db.collection('Users').document(user_id)
@@ -195,20 +181,25 @@ def update_user(user_id: str, update_data: UserUpdate, token: dict = Depends(ver
     
     update_dict = {}
 
-    if update_data.Username:
+    if update_data.username:
         users_ref = db.collection('Users')
-        username_query = users_ref.where('Username', '==', update_data.Username).stream()
-        for u in username_query:
-            if u.id != user_id:
+        target_username = update_data.username.lower()
+        
+        # Manual backend-side check
+        all_users = users_ref.stream()
+        for u in all_users:
+            if u.id != user_id and u.to_dict().get('username', '').lower() == target_username:
                 raise HTTPException(status_code=400, detail="Username already exists")
-        update_dict['Username'] = update_data.Username
+        
+        update_dict['username'] = update_data.username
 
-    if update_data.AvatarID is not None:
-        update_dict['AvatarID'] = update_data.AvatarID
+    # Check for lowercase 'avatar_id'
+    if update_data.avatar_id is not None:
+        update_dict['avatar_id'] = update_data.avatar_id
 
-    if update_data.Password:
+    if update_data.password:
         try:
-            auth.update_user(user_id, password=update_data.Password)
+            auth.update_user(user_id, password=update_data.password)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Firebase Auth Error: {str(e)}")
 
@@ -218,13 +209,13 @@ def update_user(user_id: str, update_data: UserUpdate, token: dict = Depends(ver
     return {"message": "User profile updated successfully"}
 
 @app.delete("/users/{user_id}")
-def delete_user(user_id: str, token: dict = Depends(verify_firebase_token)):
+def delete_user(user_id: str, x_user_id: str = Header(...)):
     """
     Endpoint for deleting a user.
     Checks if the authenticated user matches the user_id being deleted, then
     deletes the user from Firebase Auth and Firestore.
     """
-    if token.get("uid") != user_id:
+    if x_user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this profile")
     
     try:

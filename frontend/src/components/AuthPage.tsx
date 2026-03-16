@@ -1,17 +1,20 @@
 import { useState } from 'react';
-import { ArrowLeft, Mail, Lock, User, Eye, EyeOff, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Mail, Lock, User, Eye, EyeOff, CheckCircle, Loader2 } from 'lucide-react';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../firebase';
 
 interface AuthPageProps {
-  onLogin: (user: any) => void;
   onBack: () => void;
 }
 
-export function AuthPage({ onLogin, onBack }: AuthPageProps) {
+const GATEWAY_URL = 'http://localhost/api';
+
+export function AuthPage({ onBack }: AuthPageProps) {
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
-  const [emailVerified, setEmailVerified] = useState(false);
-  const [showOtpInput, setShowOtpInput] = useState(false);
-  const [otp, setOtp] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [registrationSuccess, setRegistrationSuccess] = useState(false);
+
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -36,124 +39,120 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
     return password.length >= 8 && password.length <= 25 && hasAlpha && hasNumber;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const newErrors: any = {};
 
-    // Validate email or username for login
-    if (isLogin) {
-      if (!formData.email.trim()) {
-        newErrors.email = 'Email or username is required';
-      }
-    } else {
-      // Registration validations
+    if (!isLogin) {
       if (!validateUsername(formData.username)) {
-        newErrors.username = 'Username: 1-25 chars, alphanumeric, underscore, or dash only';
+        newErrors.username = 'Username must be 1-25 characters (letters, numbers, _, -)';
       }
-
-      if (!validateEmail(formData.email)) {
-        newErrors.email = 'Please enter a valid email address';
+      if (!validatePassword(formData.password)) {
+        newErrors.password = 'Password must be 8-25 characters and contain both letters and numbers';
       }
-
       if (formData.password !== formData.confirmPassword) {
         newErrors.confirmPassword = 'Passwords do not match';
       }
     }
 
-    if (!validatePassword(formData.password)) {
-      newErrors.password = 'Password: 8-25 chars, must contain letters and at least 1 number';
+    if (!isLogin && !validateEmail(formData.email)) {
+      newErrors.email = 'Please enter a valid email address';
+    } else if (isLogin && !formData.email) {
+      newErrors.email = 'Email or Username is required';
     }
 
     setErrors(newErrors);
 
     if (Object.keys(newErrors).length === 0) {
-      if (isLogin) {
-        // Simulate successful login
-        onLogin({
-          username: formData.username || formData.email.split('@')[0],
-          email: formData.email.includes('@') ? formData.email : `${formData.email}@example.com`,
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${formData.email}`
-        });
-      } else {
-        // For registration, show OTP verification
-        setShowOtpInput(true);
+      setIsLoading(true);
+      try {
+        if (isLogin) {
+          // --- 1. LOGIN FLOW ---
+          let loginEmail = formData.email;
+
+          if (!loginEmail.includes('@')) {
+            const lookupRes = await fetch(`${GATEWAY_URL}/users/lookup/${loginEmail}`);
+            if (!lookupRes.ok) throw new Error('Username not found');
+            const data = await lookupRes.json();
+
+            loginEmail = data.email;
+          }
+
+          const userCredential = await signInWithEmailAndPassword(auth, loginEmail, formData.password);
+          const firebaseUser = userCredential.user;
+
+          // EMAIL VERIFICATION CHECK
+          if (!firebaseUser.emailVerified) {
+            await auth.signOut();
+            throw new Error('Please verify your email before logging in. Check your inbox!');
+          }
+
+        } else {
+          // --- 2. REGISTRATION FLOW ---
+          const response = await fetch(`${GATEWAY_URL}/users`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: formData.username,
+              email: formData.email,
+              password: formData.password,
+              confirm_password: formData.confirmPassword,
+              avatar_id: 1,
+              role: "User"
+            })
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            const detail = errorData.detail;
+            throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+          }
+
+          setRegistrationSuccess(true);
+        }
+      } catch (err: any) {
+        setErrors({ email: err.message });
+      } finally {
+        setIsLoading(false);
       }
     }
   };
 
-  const handleVerifyOtp = () => {
-    // Simulate OTP verification (in real app, verify with backend)
-    if (otp === '123456' || otp.length === 6) {
-      setEmailVerified(true);
-      setTimeout(() => {
-        onLogin({
-          username: formData.username,
-          email: formData.email,
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${formData.email}`
-        });
-      }, 1000);
-    } else {
-      setErrors({ otp: 'Invalid OTP. Try 123456 for demo' });
-    }
-  };
-
-  if (showOtpInput) {
+  // --- SUCCESS SCREEN FOR REGISTRATION ---
+  if (registrationSuccess) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="max-w-md w-full">
           <button
-            onClick={() => setShowOtpInput(false)}
+            onClick={() => {
+              setRegistrationSuccess(false);
+              setIsLogin(true);
+            }}
             className="mb-8 flex items-center gap-2 text-[#4A4563] hover:text-[#5A5573]"
           >
             <ArrowLeft className="w-5 h-5" />
-            <span>Back</span>
+            <span>Back to Login</span>
           </button>
 
-          <div className="card-purple">
-            <div className="text-center mb-8">
-              <div className="bg-[#E8B995] w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Mail className="w-10 h-10 text-[#4A4563]" />
-              </div>
-              <h2 className="text-white text-3xl font-bold mb-2">Verify Your Email</h2>
-              <p className="text-gray-300">
-                We've sent a verification code to<br />
-                <span className="text-[#E8B995]">{formData.email}</span>
-              </p>
+          <div className="card-purple text-center p-8">
+            <div className="bg-[#E8B995] w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+              <CheckCircle className="w-10 h-10 text-[#4A4563]" />
             </div>
-
-            <div className="space-y-4">
-              <div>
-                <input
-                  type="text"
-                  placeholder="Enter 6-digit OTP"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  className="input-field w-full text-center text-2xl tracking-widest"
-                  maxLength={6}
-                />
-                {errors.otp && (
-                  <p className="text-[#E8B995] text-sm mt-1 text-center">{errors.otp}</p>
-                )}
-                <p className="text-gray-400 text-xs mt-2 text-center">Demo: Use 123456</p>
-              </div>
-
-              <button onClick={handleVerifyOtp} className="btn-secondary w-full mt-6">
-                Verify Email
-              </button>
-            </div>
-
-            {emailVerified && (
-              <div className="mt-4 bg-green-500 text-white px-4 py-3 rounded-2xl flex items-center gap-2 justify-center">
-                <CheckCircle className="w-5 h-5" />
-                <span>Email verified! Redirecting...</span>
-              </div>
-            )}
+            <h2 className="text-white text-3xl font-bold mb-4">Account Created!</h2>
+            <p className="text-gray-300 mb-6">
+              We've sent a verification link to<br />
+              <span className="text-[#E8B995] font-semibold">{formData.email}</span>
+            </p>
+            <p className="text-sm text-gray-400">
+              Please check your inbox and click the link to verify your account before logging in.
+            </p>
           </div>
         </div>
       </div>
     );
   }
 
+  // --- MAIN FORM SCREEN ---
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
       <div className="max-w-md w-full">
@@ -186,11 +185,10 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
                     value={formData.username}
                     onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                     className="input-field w-full pl-12"
+                    disabled={isLoading}
                   />
                 </div>
-                {errors.username && (
-                  <p className="text-[#E8B995] text-sm mt-1 ml-4">{errors.username}</p>
-                )}
+                {errors.username && <p className="text-[#E8B995] text-sm mt-1 ml-4">{errors.username}</p>}
               </div>
             )}
 
@@ -203,11 +201,10 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   className="input-field w-full pl-12"
+                  disabled={isLoading}
                 />
               </div>
-              {errors.email && (
-                <p className="text-[#E8B995] text-sm mt-1 ml-4">{errors.email}</p>
-              )}
+              {errors.email && <p className="text-[#E8B995] text-sm mt-1 ml-4">{errors.email}</p>}
             </div>
 
             <div>
@@ -219,18 +216,18 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   className="input-field w-full pl-12 pr-12"
+                  disabled={isLoading}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-300"
+                  disabled={isLoading}
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
-              {errors.password && (
-                <p className="text-[#E8B995] text-sm mt-1 ml-4">{errors.password}</p>
-              )}
+              {errors.password && <p className="text-[#E8B995] text-sm mt-1 ml-4">{errors.password}</p>}
             </div>
 
             {!isLogin && (
@@ -243,15 +240,19 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
                     value={formData.confirmPassword}
                     onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
                     className="input-field w-full pl-12"
+                    disabled={isLoading}
                   />
                 </div>
-                {errors.confirmPassword && (
-                  <p className="text-[#E8B995] text-sm mt-1 ml-4">{errors.confirmPassword}</p>
-                )}
+                {errors.confirmPassword && <p className="text-[#E8B995] text-sm mt-1 ml-4">{errors.confirmPassword}</p>}
               </div>
             )}
 
-            <button type="submit" className="btn-secondary w-full mt-6">
+            <button
+              type="submit"
+              className="btn-secondary w-full mt-6 flex justify-center items-center gap-2"
+              disabled={isLoading}
+            >
+              {isLoading && <Loader2 className="w-5 h-5 animate-spin" />}
               {isLogin ? 'Login' : 'Create Account'}
             </button>
           </form>
@@ -264,6 +265,7 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
                 setFormData({ username: '', email: '', password: '', confirmPassword: '' });
               }}
               className="text-[#E8B995] hover:text-[#F0C5A5]"
+              disabled={isLoading}
             >
               {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Login'}
             </button>

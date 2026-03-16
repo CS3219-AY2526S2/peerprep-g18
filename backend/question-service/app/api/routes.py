@@ -19,8 +19,9 @@ def verify_admin(x_user_role: Optional[str]):
             detail="Admin privileges required"
         )
 
-# Get a random question id based on a given topic and difficulty level
-@router.get("/", response_model=Question)
+
+# Get a random question ID based on a given topic and difficulty level
+@router.get("/", response_model=dict)
 async def read_questions(
     topic: str, 
     difficulty: str
@@ -45,10 +46,10 @@ async def read_questions(
             detail=f"No questions found for {topic} with {difficulty} difficulty"
         )
 
-    
     randomQuestion_id = random.choice(doc_ids)
 
-    return randomQuestion_id
+    return {"question_id": randomQuestion_id}
+
     
 
 # @router.get("/brew", status_code=418)
