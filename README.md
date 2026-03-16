@@ -4,10 +4,10 @@
 
 ## Group Members:
 - [Lee Jia Quan, Benny](https://github.com/Shamanbenny)
-- Kannan Annamalai
-- Heng Yee Chong Fabian
-- Subramanian Pon Harish
-- Lee De En
+- [Kannan Annamalai](https://github.com/Kannan171)
+- [Heng Yee Chong Fabian](https://github.com/FabianHeng)
+- [Subramanian Pon Harish](https://github.com/Ponharish)
+- [Lee De En](https://github.com/leedeen01)
 
 ## Roles and Responsibilities:
 - M1: User Management - Heng Yee Chong Fabian
