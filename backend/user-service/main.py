@@ -208,21 +208,20 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
 
     return {"message": "User profile updated successfully"}
 
-# --- UPDATE EXISTING DELETE ENDPOINT ---
+# --- DELETE USER ---
 @app.delete("/users/{user_id}")
 def delete_user(user_id: str, x_user_id: str = Header(...), x_user_role: str = Header(None)):
     """
     Endpoint for deleting a user.
-    Users can delete themselves. Admins can delete anyone EXCEPT the Root admin.
+    Users can delete themselves. Admins and Root can delete anyone EXCEPT the Root admin.
     """
-    if x_user_id != user_id and x_user_role != "Admin":
+    if x_user_id != user_id and x_user_role not in ["Admin", "Root"]:
         raise HTTPException(status_code=403, detail="Not authorized to delete this profile")
     
     doc_ref = db.collection('Users').document(user_id)
     doc = doc_ref.get()
-    
-    # Protect the Root Admin from deletion
-    if doc.exists and doc.to_dict().get("username") == "Root":
+
+    if doc.exists and doc.to_dict().get("role") == "Root":
         raise HTTPException(status_code=403, detail="The Root admin cannot be deleted")
     
     try:
@@ -234,30 +233,28 @@ def delete_user(user_id: str, x_user_id: str = Header(...), x_user_role: str = H
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# --- GET ALL USERS ---
 @app.get("/users")
 def get_all_users(x_user_role: str = Header(None)):
-    """
-    Admin endpoint to list all verified users and admins.
-    """
-    if x_user_role != "Admin":
+    # 🔴 FIX: Allow both Admin and Root to view the dashboard
+    if x_user_role not in ["Admin", "Root"]:
         raise HTTPException(status_code=403, detail="Admin access required")
     
     users_ref = db.collection('Users')
-    verified_users = []
+    all_users = []
     
     for doc in users_ref.stream():
-        data = doc.to_dict()
-        if data.get("role") in ["User", "Admin"]:
-            verified_users.append(data)
+        all_users.append(doc.to_dict())
             
-    return verified_users
+    return all_users
 
+
+# --- PROMOTE USER ---
 @app.post("/users/{target_user_id}/promote")
 def promote_user(target_user_id: str, x_user_role: str = Header(None)):
-    """
-    Admin endpoint to promote a standard user to Admin.
-    """
-    if x_user_role != "Admin":
+    # 🔴 FIX: Allow both Admin and Root to promote users
+    if x_user_role not in ["Admin", "Root"]:
         raise HTTPException(status_code=403, detail="Admin access required")
         
     doc_ref = db.collection('Users').document(target_user_id)
@@ -266,12 +263,11 @@ def promote_user(target_user_id: str, x_user_role: str = Header(None)):
     if not doc.exists:
         raise HTTPException(status_code=404, detail="User not found")
         
-    if doc.to_dict().get("role") == "Admin":
-        return {"message": "User is already an admin"}
+    current_role = doc.to_dict().get("role")
+    if current_role == "Admin" or current_role == "Root":
+        return {"message": f"User is already an {current_role}"}
         
-    # Update Firestore
     doc_ref.update({"role": "Admin"})
-    # Update Firebase Auth Custom Claims
     auth.set_custom_user_claims(target_user_id, {'role': "Admin"})
     
     return {"message": "User promoted to Admin successfully"}
