@@ -9,7 +9,7 @@ import { CollaborationPage } from './components/CollaborationPage';
 import { ProfilePage } from './components/ProfilePage';
 
 type Page = 'landing' | 'auth' | 'dashboard' | 'matching' | 'collaboration' | 'profile';
-const GATEWAY_URL = 'http://localhost:1234';
+const GATEWAY_URL = 'http://localhost/api';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('landing');
@@ -35,7 +35,7 @@ export default function App() {
             setUser({
               ...profileData,
               uid: firebaseUser.uid,
-              avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileData.Email}`
+              avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileData.email}`
             });
             setCurrentPage('dashboard');
           }
