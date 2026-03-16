@@ -18,7 +18,7 @@ export default function App() {
   const [matchingCriteria, setMatchingCriteria] = useState<any>(null);
   const [session, setSession] = useState<any>(null);
 
-  // --- SESSION REHYDRATION ---
+  // --- SESSION REHYDRATION & LOGIN HANDLING ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
@@ -38,9 +38,12 @@ export default function App() {
               avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileData.email}`
             });
             setCurrentPage('dashboard');
+          } else {
+             // Handle case where Firebase user exists but DB profile is missing/fails
+             console.error("Failed to fetch user profile from gateway");
           }
         } catch (err) {
-          console.error("Session restore failed:", err);
+          console.error("Session restore/login failed:", err);
         }
       } else {
         setUser(null);
@@ -50,11 +53,6 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
-
-  const handleLogin = (userData: any) => {
-    setUser(userData);
-    setCurrentPage('dashboard');
-  };
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -88,7 +86,7 @@ export default function App() {
       )}
       
       {currentPage === 'auth' && (
-        <AuthPage onLogin={handleLogin} onBack={() => setCurrentPage('landing')} />
+        <AuthPage onBack={() => setCurrentPage('landing')} />
       )}
       
       {currentPage === 'dashboard' && (

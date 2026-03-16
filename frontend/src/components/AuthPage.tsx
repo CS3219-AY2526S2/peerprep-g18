@@ -4,13 +4,12 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
 
 interface AuthPageProps {
-  onLogin: (user: any) => void;
   onBack: () => void;
 }
 
 const GATEWAY_URL = 'http://localhost/api';
 
-export function AuthPage({ onLogin, onBack }: AuthPageProps) {
+export function AuthPage({ onBack }: AuthPageProps) {
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -44,7 +43,25 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
     e.preventDefault();
     const newErrors: any = {};
 
-    // (Validation logic remains the same)
+    if (!isLogin) {
+      if (!validateUsername(formData.username)) {
+        newErrors.username = 'Username must be 1-25 characters (letters, numbers, _, -)';
+      }
+      if (!validatePassword(formData.password)) {
+        newErrors.password = 'Password must be 8-25 characters and contain both letters and numbers';
+      }
+      if (formData.password !== formData.confirmPassword) {
+        newErrors.confirmPassword = 'Passwords do not match';
+      }
+    }
+
+    if (!isLogin && !validateEmail(formData.email)) {
+      newErrors.email = 'Please enter a valid email address';
+    } else if (isLogin && !formData.email) {
+      newErrors.email = 'Email or Username is required';
+    }
+
+    setErrors(newErrors);
 
     if (Object.keys(newErrors).length === 0) {
       setIsLoading(true);
@@ -69,25 +86,6 @@ export function AuthPage({ onLogin, onBack }: AuthPageProps) {
             await auth.signOut();
             throw new Error('Please verify your email before logging in. Check your inbox!');
           }
-
-          const token = await firebaseUser.getIdToken();
-          localStorage.setItem('peerprep_token', token);
-
-          const profileRes = await fetch(`${GATEWAY_URL}/users/${userCredential.user.uid}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-
-          if (!profileRes.ok) throw new Error('Failed to fetch user profile');
-          const profileData = await profileRes.json();
-
-          onLogin({
-            uid: userCredential.user.uid,
-            username: profileData.username,
-            email: profileData.email,
-            avatarId: profileData.avatar_id,
-            role: profileData.role,
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileData.email}`
-          });
 
         } else {
           // --- 2. REGISTRATION FLOW ---
