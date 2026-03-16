@@ -96,20 +96,23 @@ def send_verification_email(receiver_email: str, verification_link: str):
 def create_user(user: UserCreate):
     """
     Endpoint for User Creation.
-    Checks for unique username in Firestore, creates user in Firebase Auth,
-    generates email verification link, and stores profile data in Firestore.
+    Checks for unique username (case-insensitive) by streaming and filtering in the backend.
     """
     users_ref = db.collection('Users')
-    username_query = users_ref.where('username', '==', user.username).stream()
-    if any(username_query):
-        raise HTTPException(status_code=400, detail="Username already exists")
+    target_username = user.username.lower()
+    
+    # Manual backend-side case-insensitive check
+    all_users = users_ref.stream()
+    for doc in all_users:
+        existing_user = doc.to_dict()
+        if existing_user.get('username', '').lower() == target_username:
+            raise HTTPException(status_code=400, detail="Username already exists")
 
     try:
         user_record = auth.create_user(
             email=user.email,
             password=user.password
         )
-
         auth.set_custom_user_claims(user_record.uid, {'role': user.role})
         
         verification_link = auth.generate_email_verification_link(user.email)
@@ -136,7 +139,6 @@ def create_user(user: UserCreate):
 def get_user(user_id: str):
     """
     Endpoint for retrieving user profile data.
-    Fetches user data from Firestore based on UserID.
     """
     doc_ref = db.collection('Users').document(user_id)
     doc = doc_ref.get()
@@ -149,23 +151,24 @@ def get_user(user_id: str):
 @app.get("/users/lookup/{username}")
 def lookup_email_by_username(username: str):
     """
-    Helper endpoint for looking up a user's email by their username.
-    Used during login to allow users to enter either their email or username.
+    Helper endpoint for looking up email (case-insensitive) via backend filtering.
     """
     users_ref = db.collection('Users')
-    username_query = users_ref.where('username', '==', username).stream()
+    target_username = username.lower()
     
-    for doc in username_query:
-        return {"email": doc.to_dict().get("email")}
+    all_users = users_ref.stream()
+    for doc in all_users:
+        user_data = doc.to_dict()
+        if user_data.get('username', '').lower() == target_username:
+            return {"email": user_data.get("email")}
         
     raise HTTPException(status_code=404, detail="Username not found")
 
 @app.patch("/users/{user_id}")
 def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(...)):
     """
-    Helper endpoint for updating user profile data.
-    Checks if the authenticated user matches the user_id being updated, then
-    handles password changes via Firebase Auth and updates other profile fields in Firestore.
+    Endpoint for updating user profile.
+    Performs case-insensitive uniqueness check in backend if username is changing.
     """
     if x_user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to edit this profile")
@@ -178,14 +181,16 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
     
     update_dict = {}
 
-    # Check for lowercase 'username' in update_data
     if update_data.username:
         users_ref = db.collection('Users')
-        # Query lowercase 'username' in Firestore
-        username_query = users_ref.where('username', '==', update_data.username).stream()
-        for u in username_query:
-            if u.id != user_id:
+        target_username = update_data.username.lower()
+        
+        # Manual backend-side check
+        all_users = users_ref.stream()
+        for u in all_users:
+            if u.id != user_id and u.to_dict().get('username', '').lower() == target_username:
                 raise HTTPException(status_code=400, detail="Username already exists")
+        
         update_dict['username'] = update_data.username
 
     # Check for lowercase 'avatar_id'

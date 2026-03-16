@@ -27,7 +27,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
 
-  # The Librarian (Internal)
+  # ==========
+  # The (Internal) Services
+  # ==========
   user-service:
     build: ./user-service
     container_name: user-service
@@ -41,10 +43,20 @@ services:
       - PYTHONUNBUFFERED=1
 
   collab-service:
-      build: ./collaboration-service
-      container_name: collab-service
-      expose:
-        - "4000"
-      volumes:
-        - ./collaboration-service:/app
-        - /app/node_modules  # <--- CRITICAL: Protects the installed packages
+    build: ./collaboration-service
+    container_name: collab-service
+    expose:
+      - "4000"
+    volumes:
+      - ./collaboration-service:/app
+      - /app/node_modules
+
+  question-service:
+    build: ./question-service
+    container_name: question-service
+    expose:
+      - "6768"
+    volumes:
+      - ./question-service:/app
+    environment:
+      - PYTHONUNBUFFERED=1

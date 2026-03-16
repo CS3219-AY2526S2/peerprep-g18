@@ -37,9 +37,9 @@ async def shutdown_event():
 # When running locally, use localhost. In Docker Compose later, use container names.
 SERVICES = {
     "users": "http://user-service:6767",
-    "collab": "http://collab-service:4000"
-    # "questions": "http://localhost:6768",
-    # "matching": "http://localhost:6769",
+    "question": "http://question-service:6768",
+    # "matching": "http://matching-service:6769",
+    "collab": "http://collab-service:4000",
 }
 
 # Routes that DO NOT require authentication (e.g., login, registration)

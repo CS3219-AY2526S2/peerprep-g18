@@ -19,8 +19,8 @@ def verify_admin(x_user_role: Optional[str]):
             detail="Admin privileges required"
         )
 
-# Get a random question based on a given topic and difficulty level
-@router.get("/", response_model=Question)
+# Get a random question ID based on a given topic and difficulty level
+@router.get("/", response_model=dict)
 async def read_questions(
     topic: str, 
     difficulty: str
@@ -45,19 +45,9 @@ async def read_questions(
             detail=f"No questions found for {topic} with {difficulty} difficulty"
         )
 
-    
     randomQuestion_id = random.choice(doc_ids)
 
-    # Fetch the question
-    doc_ref = questions_ref.document(randomQuestion_id)
-    doc = doc_ref.get()
-
-    question_data = doc.to_dict()
-    
-    # Add the document ID to the returned data for consistency with the Question model
-    question_data["question_id"] = doc.id
-
-    return question_data
+    return {"question_id": randomQuestion_id}
     
 
 @router.get("/brew", status_code=418)
