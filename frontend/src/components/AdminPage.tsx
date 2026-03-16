@@ -186,7 +186,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
     setActionLoading('add-question');
     try {
       const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/question`, {
+      const response = await fetch(`${GATEWAY_URL}/question/`, {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${token}`,
