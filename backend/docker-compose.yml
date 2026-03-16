@@ -24,8 +24,10 @@ services:
       - ./api-gateway:/app
     depends_on:
       - user-service
+      - redis-event-bus # Listen for match events
     environment:
       - PYTHONUNBUFFERED=1
+      - REDIS_EVENT_BUS_HOST=redis-event-bus
 
   # The Librarian (Internal)
   user-service:
@@ -59,16 +61,24 @@ services:
     volumes:
       - ./matching-service:/app
     depends_on:
-      - redis
+      - redis-matching    # User queue
+      - redis-event-bus   # To publish event
     environment:
       - PYTHONUNBUFFERED=1
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_MATCH_HOST=redis-matching
+      - REDIS_EVENT_BUS_HOST=redis-event-bus
   
-  redis:
+  redis-matching:
     image: redis:7-alpine
-    container_name: redis
+    container_name: redis-matching
     expose:
       - "6379"
     ports:
       - "6379:6379" # For debugging, TO REMOVE
+  
+  # Event bus for communication between API gateway/Matching service
+  redis-event-bus:
+    image: redis:7-alpine
+    container_name: redis-event-bus
+    ports:
+      - "6381:6379" # Avoid local collision, for debugging
