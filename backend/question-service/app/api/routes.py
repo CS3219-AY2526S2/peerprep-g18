@@ -13,7 +13,7 @@ router = APIRouter()
 # An internal function to check admin privileges based on the X-User-Role header
 # The role is checked before allowing access to create, update, or delete operations
 def verify_admin(x_user_role: Optional[str]):
-    if x_user_role != "admin":
+    if not(x_user_role == "admin" or x_user_role == "root"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
             detail="Admin privileges required"
