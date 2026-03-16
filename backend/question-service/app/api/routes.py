@@ -51,9 +51,9 @@ async def read_questions(
     return randomQuestion_id
     
 
-@router.get("/brew", status_code=418)
-async def brew():
-    return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
+# @router.get("/brew", status_code=418)
+# async def brew():
+#     return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
 
 # Get specific question by ID
 # This endpoint is expected to be used by question-history service to fetch question details for a given question_id.
