@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ArrowLeft, Edit2, Check, Loader2, AlertTriangle } from 'lucide-react';
+import { GATEWAY_URL } from '../constants';
 
 interface ProfilePageProps {
   user: any;
@@ -7,8 +8,6 @@ interface ProfilePageProps {
   onLogout: () => void;
   onUpdate: (data: any) => void;
 }
-
-const GATEWAY_URL = 'http://localhost/api';
 
 export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePageProps) {
   const [isEditing, setIsEditing] = useState(false);

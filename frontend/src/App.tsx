@@ -7,9 +7,10 @@ import { Dashboard } from './components/Dashboard';
 import { MatchingPage } from './components/MatchingPage';
 import { CollaborationPage } from './components/CollaborationPage';
 import { ProfilePage } from './components/ProfilePage';
+import { AdminPage } from './components/AdminPage';
+import { GATEWAY_URL } from './constants';
 
-type Page = 'landing' | 'auth' | 'dashboard' | 'matching' | 'collaboration' | 'profile';
-const GATEWAY_URL = 'http://localhost/api';
+type Page = 'landing' | 'auth' | 'dashboard' | 'matching' | 'collaboration' | 'profile' | 'admin';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('landing');
@@ -32,12 +33,15 @@ export default function App() {
           
           if (res.ok) {
             const profileData = await res.json();
+            const isAdmin = profileData.role?.toLowerCase() === 'admin' || profileData.username === 'Root';
+            
             setUser({
               ...profileData,
               uid: firebaseUser.uid,
               avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileData.email}`
             });
-            setCurrentPage('dashboard');
+            
+            setCurrentPage(isAdmin ? 'admin' : 'dashboard');
           } else {
              // Handle case where Firebase user exists but DB profile is missing/fails
              console.error("Failed to fetch user profile from gateway");
@@ -98,6 +102,12 @@ export default function App() {
         />
       )}
       
+      {currentPage === 'admin' && (
+        <AdminPage
+          currentUser={user}
+        />
+      )}
+
       {currentPage === 'matching' && (
         <MatchingPage
           criteria={matchingCriteria}
