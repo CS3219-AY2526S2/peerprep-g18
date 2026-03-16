@@ -208,16 +208,30 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
 
     return {"message": "User profile updated successfully"}
 
-# --- DELETE USER ---
+# --- DELETE USER (Self) ---
 @app.delete("/users/{user_id}")
-def delete_user(user_id: str, x_user_id: str = Header(...), x_user_role: str = Header(None)):
+def delete_self(user_id: str, x_user_id: str = Header(...)):
     """
-    Endpoint for deleting a user.
-    Users can delete themselves. Admins and Root can delete anyone EXCEPT the Root admin.
+    Endpoint for users to delete their own account.
     """
-    if x_user_id != user_id and x_user_role not in ["Admin", "Root"]:
+    if x_user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this profile")
     
+    return perform_delete(user_id)
+
+# --- DELETE USER (Admin) ---
+@app.delete("/admin/users/{user_id}")
+def delete_user_admin(user_id: str, x_user_role: str = Header(None)):
+    """
+    Endpoint for admins to delete any account (except Root).
+    """
+    role_check = x_user_role.strip().lower() if x_user_role else ""
+    if role_check not in ["admin", "root"]:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return perform_delete(user_id)
+
+def perform_delete(user_id: str):
     doc_ref = db.collection('Users').document(user_id)
     doc = doc_ref.get()
 
@@ -235,10 +249,11 @@ def delete_user(user_id: str, x_user_id: str = Header(...), x_user_role: str = H
 
 
 # --- GET ALL USERS ---
-@app.get("/users")
+@app.get("/admin/users")
 def get_all_users(x_user_role: str = Header(None)):
     # 🔴 FIX: Allow both Admin and Root to view the dashboard
-    if x_user_role not in ["Admin", "Root"]:
+    role_check = x_user_role.strip().lower() if x_user_role else ""
+    if role_check not in ["admin", "root"]:
         raise HTTPException(status_code=403, detail="Admin access required")
     
     users_ref = db.collection('Users')
@@ -251,10 +266,11 @@ def get_all_users(x_user_role: str = Header(None)):
 
 
 # --- PROMOTE USER ---
-@app.post("/users/{target_user_id}/promote")
+@app.post("/admin/promote/{target_user_id}")
 def promote_user(target_user_id: str, x_user_role: str = Header(None)):
     # 🔴 FIX: Allow both Admin and Root to promote users
-    if x_user_role not in ["Admin", "Root"]:
+    role_check = x_user_role.strip().lower() if x_user_role else ""
+    if role_check not in ["admin", "root"]:
         raise HTTPException(status_code=403, detail="Admin access required")
         
     doc_ref = db.collection('Users').document(target_user_id)

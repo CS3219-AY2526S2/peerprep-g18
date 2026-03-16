@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save } from 'lucide-react';
+import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
 
 interface AdminPageProps {
   currentUser: any;
+  onLogout: () => void;
 }
 
 type AdminTab = 'users' | 'questions';
 
-export function AdminPage({ currentUser }: AdminPageProps) {
+export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
   const [users, setUsers] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,7 +45,7 @@ export function AdminPage({ currentUser }: AdminPageProps) {
     setIsLoading(true);
     try {
       const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/users`, {
+      const response = await fetch(`${GATEWAY_URL}/admin/users`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
@@ -141,7 +142,7 @@ export function AdminPage({ currentUser }: AdminPageProps) {
     setActionLoading(`promote-${targetUserId}`);
     try {
       const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/users/${targetUserId}/promote`, {
+      const response = await fetch(`${GATEWAY_URL}/admin/promote/${targetUserId}`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -162,7 +163,7 @@ export function AdminPage({ currentUser }: AdminPageProps) {
     setActionLoading(`delete-user-${targetUserId}`);
     try {
       const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/users/${targetUserId}`, {
+      const response = await fetch(`${GATEWAY_URL}/admin/users/${targetUserId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -214,11 +215,17 @@ export function AdminPage({ currentUser }: AdminPageProps) {
     <div className="min-h-screen p-6 bg-[#2D2942]">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="flex items-center justify-end mb-8">
+        <div className="flex items-center justify-end mb-8 gap-3">
           <div className="flex items-center gap-2 text-[#E8B995] bg-[#3A3552] px-4 py-2 rounded-full font-bold">
             <Shield className="w-5 h-5" />
-            Admin Panel
+            {currentUser.role === 'Root' ? 'Root' : 'Admin'} Panel (as {currentUser.username})
           </div>
+          <button
+            onClick={onLogout}
+            className="bg-[#3A3552] p-2.5 rounded-full hover:bg-[#453F5C] transition-all"
+          >
+            <LogOut className="w-5 h-5 text-white" />
+          </button>
         </div>
 
         {/* Tabs */}
