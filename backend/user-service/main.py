@@ -208,21 +208,70 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
 
     return {"message": "User profile updated successfully"}
 
+# --- UPDATE EXISTING DELETE ENDPOINT ---
 @app.delete("/users/{user_id}")
-def delete_user(user_id: str, x_user_id: str = Header(...)):
+def delete_user(user_id: str, x_user_id: str = Header(...), x_user_role: str = Header(None)):
     """
     Endpoint for deleting a user.
-    Checks if the authenticated user matches the user_id being deleted, then
-    deletes the user from Firebase Auth and Firestore.
+    Users can delete themselves. Admins can delete anyone EXCEPT the Root admin.
     """
-    if x_user_id != user_id:
+    if x_user_id != user_id and x_user_role != "Admin":
         raise HTTPException(status_code=403, detail="Not authorized to delete this profile")
+    
+    doc_ref = db.collection('Users').document(user_id)
+    doc = doc_ref.get()
+    
+    # Protect the Root Admin from deletion
+    if doc.exists and doc.to_dict().get("username") == "Root":
+        raise HTTPException(status_code=403, detail="The Root admin cannot be deleted")
     
     try:
         auth.delete_user(user_id)
         db.collection('Users').document(user_id).delete()
-        return {"message": f"User {user_id} deleted successfully from Auth and Database"}
+        return {"message": f"User {user_id} deleted successfully"}
     except auth.UserNotFoundError:
         raise HTTPException(status_code=404, detail="User not found in Firebase Auth")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/users")
+def get_all_users(x_user_role: str = Header(None)):
+    """
+    Admin endpoint to list all verified users and admins.
+    """
+    if x_user_role != "Admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users_ref = db.collection('Users')
+    verified_users = []
+    
+    for doc in users_ref.stream():
+        data = doc.to_dict()
+        if data.get("role") in ["User", "Admin"]:
+            verified_users.append(data)
+            
+    return verified_users
+
+@app.post("/users/{target_user_id}/promote")
+def promote_user(target_user_id: str, x_user_role: str = Header(None)):
+    """
+    Admin endpoint to promote a standard user to Admin.
+    """
+    if x_user_role != "Admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+        
+    doc_ref = db.collection('Users').document(target_user_id)
+    doc = doc_ref.get()
+    
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if doc.to_dict().get("role") == "Admin":
+        return {"message": "User is already an admin"}
+        
+    # Update Firestore
+    doc_ref.update({"role": "Admin"})
+    # Update Firebase Auth Custom Claims
+    auth.set_custom_user_claims(target_user_id, {'role': "Admin"})
+    
+    return {"message": "User promoted to Admin successfully"}
