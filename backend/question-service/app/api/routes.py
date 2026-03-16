@@ -19,6 +19,7 @@ def verify_admin(x_user_role: Optional[str]):
             detail="Admin privileges required"
         )
 
+
 # Get a random question ID based on a given topic and difficulty level
 @router.get("/", response_model=dict)
 async def read_questions(
@@ -48,11 +49,12 @@ async def read_questions(
     randomQuestion_id = random.choice(doc_ids)
 
     return {"question_id": randomQuestion_id}
+
     
 
-@router.get("/brew", status_code=418)
-async def brew():
-    return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
+# @router.get("/brew", status_code=418)
+# async def brew():
+#     return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
 
 # Get specific question by ID
 # This endpoint is expected to be used by question-history service to fetch question details for a given question_id.

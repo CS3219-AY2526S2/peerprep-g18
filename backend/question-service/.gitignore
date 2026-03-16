@@ -31,6 +31,7 @@ htmlcov/
 # Template / Build Files
 # =========================
 questions.json
+questions_md.json
 firebase_data_init.py
 firebase_db_test.py
 
