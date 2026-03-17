@@ -55,9 +55,7 @@ services:
     build: ./matching-service
     container_name: matching-service
     expose:
-      - "8000"
-    ports:
-      - "8000:8000" # For debugging, TO REMOVE
+      - "6769"
     volumes:
       - ./matching-service:/app
     depends_on:
@@ -73,12 +71,10 @@ services:
     container_name: redis-matching
     expose:
       - "6379"
-    ports:
-      - "6379:6379" # For debugging, TO REMOVE
   
   # Event bus for communication between API gateway/Matching service
   redis-event-bus:
     image: redis:7-alpine
     container_name: redis-event-bus
-    ports:
-      - "6381:6379" # Avoid local collision, for debugging
+    expose:
+      - "6379"
