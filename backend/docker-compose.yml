@@ -51,7 +51,7 @@ services:
       - "4000"
     volumes:
       - ./collaboration-service:/app
-      - /app/node_modules  # <--- CRITICAL: Protects the installed packages
+      - /app/node_modules
 
   question-service:
     build: ./question-service

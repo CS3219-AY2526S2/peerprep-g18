@@ -13,14 +13,15 @@ router = APIRouter()
 # An internal function to check admin privileges based on the X-User-Role header
 # The role is checked before allowing access to create, update, or delete operations
 def verify_admin(x_user_role: Optional[str]):
-    if x_user_role != "admin":
+    if not(x_user_role == "admin" or x_user_role == "root"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
             detail="Admin privileges required"
         )
 
-# Get a random question based on a given topic and difficulty level
-@router.get("/", response_model=Question)
+
+# Get a random question ID based on a given topic and difficulty level
+@router.get("/", response_model=dict)
 async def read_questions(
     topic: str, 
     difficulty: str
@@ -45,24 +46,15 @@ async def read_questions(
             detail=f"No questions found for {topic} with {difficulty} difficulty"
         )
 
-    
     randomQuestion_id = random.choice(doc_ids)
 
-    # Fetch the question
-    doc_ref = questions_ref.document(randomQuestion_id)
-    doc = doc_ref.get()
+    return {"question_id": randomQuestion_id}
 
-    question_data = doc.to_dict()
-    
-    # Add the document ID to the returned data for consistency with the Question model
-    question_data["question_id"] = doc.id
-
-    return question_data
     
 
-@router.get("/brew", status_code=418)
-async def brew():
-    return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
+# @router.get("/brew", status_code=418)
+# async def brew():
+#     return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
 
 # Get specific question by ID
 # This endpoint is expected to be used by question-history service to fetch question details for a given question_id.

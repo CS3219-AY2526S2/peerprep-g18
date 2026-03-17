@@ -8,5 +8,5 @@ app = FastAPI(title="PeerPrep Question Service")
 async def health_check():
     return {"status": "healthy"}
 
-# Include routes with the /questions prefix
-app.include_router(question_router, prefix="/questions", tags=["Questions"])
+# Include routes with the /question prefix
+app.include_router(question_router, prefix="/question", tags=["Questions"])
