@@ -471,6 +471,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                           <option>Linked Lists</option>
                           <option>Trees</option>
                           <option>Graphs</option>
+                          <option>Greedy</option>
                           <option>Dynamic Programming</option>
                         </select>
                       ) : (
@@ -508,10 +509,18 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                             li: ({node, ...props}) => (
                               <li className="text-white leading-relaxed" {...props} />
                             ),
-                            // Ensure paragraphs don't squash the list
+                            
+                            
                             p: ({node, ...props}) => (
-                              <p className="mb-4 last:mb-0 leading-relaxed" {...props} />
+                              <p 
+                                // Ensure paragraphs don't squash the list
+                                // break-words: This is the magic class that fixes your screenshot issue
+                                // whitespace-pre-wrap: This ensures manual line breaks you type are respected
+                                className="mb-4 last:mb-0 leading-relaxed break-words whitespace-pre-wrap" 
+                                {...props} 
+                              />
                             )
+                            
                           }}
                         >
                           {managedQuestion.statement}
@@ -598,6 +607,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     <option>Linked Lists</option>
                     <option>Trees</option>
                     <option>Graphs</option>
+                    <option>Greedy</option>
                     <option>Dynamic Programming</option>
                   </select>
                 </div>
