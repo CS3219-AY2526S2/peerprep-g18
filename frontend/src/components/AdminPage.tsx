@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import CodeMirror from '@uiw/react-codemirror';
+import { python } from '@codemirror/lang-python';
+import { dracula } from '@uiw/codemirror-theme-dracula';
 
 interface AdminPageProps {
   currentUser: any;
@@ -16,6 +23,10 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   
+  // Question Management State
+  const [isEditing, setIsEditing] = useState(false); 
+  const [backupQuestion, setBackupQuestion] = useState<any>(null);
+
   // Question State
   const [searchId, setSearchId] = useState('');
   const [managedQuestion, setManagedQuestion] = useState<any>(null);
@@ -63,6 +74,13 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
     if (e) e.preventDefault();
     if (!searchId.trim()) return;
 
+    if (isEditing) {
+      const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
+      if (hasChanges && !window.confirm("Discard changes to the current question and search for a new one?")) {
+        return;
+      }
+    }
+
     setActionLoading('lookup-q');
     setError('');
     setManagedQuestion(null);
@@ -80,10 +98,33 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
 
       const data = await response.json();
       setManagedQuestion(data);
+      setIsEditing(false);
+      setBackupQuestion(null);
     } catch (err: any) {
       setError(err.message);
+      setManagedQuestion(null);
+      setIsEditing(false);
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleStartEditing = () => {
+    setBackupQuestion({ ...managedQuestion }); // Clone current state
+    setIsEditing(true);
+  };
+
+  const handleCancelEditing = () => {
+    // Check if anything actually changed before asking
+    const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
+    
+    if (hasChanges) {
+      if (window.confirm("You have unsaved changes. Are you sure you want to discard them?")) {
+        setManagedQuestion(backupQuestion);
+        setIsEditing(false);
+      }
+    } else {
+      setIsEditing(false);
     }
   };
 
@@ -104,11 +145,25 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
       if (!response.ok) throw new Error('Failed to update question');
       
       alert('Question updated successfully!');
+      setIsEditing(false); // Return to preview mode
     } catch (err: any) {
       alert(err.message);
     } finally {
       setActionLoading(null);
     }
+  };
+  const handleTabChange = (tab: AdminTab) => {
+    if (isEditing) {
+      const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
+      if (hasChanges && !window.confirm("You have unsaved changes. Discard them?")) {
+        return; // Stay on current tab
+      }
+    }
+    // Reset states when moving away
+    setIsEditing(false);
+    setManagedQuestion(null); 
+    setSearchId('');
+    setActiveTab(tab);
   };
 
   const handleDeleteQuestion = async (questionId: string) => {
@@ -211,6 +266,20 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
     }
   };
 
+  // Handle the case for unsaved changes when user tries to close the tab or navigate away through browser controls
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const hasChanges = isEditing && JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
+      if (hasChanges) {
+        e.preventDefault();
+        e.returnValue = ''; 
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isEditing, managedQuestion, backupQuestion]);
+
   return (
     <div className="min-h-screen p-6 bg-[#2D2942]">
       <div className="max-w-4xl mx-auto">
@@ -231,7 +300,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
         {/* Tabs */}
         <div className="flex gap-4 mb-8">
           <button
-            onClick={() => setActiveTab('users')}
+            onClick={() => handleTabChange('users')}
             className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all ${
               activeTab === 'users' ? 'bg-[#E8B995] text-[#4A4563]' : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
             }`}
@@ -240,7 +309,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
             User Management
           </button>
           <button
-            onClick={() => setActiveTab('questions')}
+            onClick={() => handleTabChange('questions')}
             className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all ${
               activeTab === 'questions' ? 'bg-[#E8B995] text-[#4A4563]' : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
             }`}
@@ -353,80 +422,137 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                 <div className="bg-[#3A3552] rounded-[32px] p-8 space-y-6 border-2 border-[#E8B995]/20 animate-in fade-in slide-in-from-bottom-4">
                   <div className="flex justify-between items-start">
                     <h3 className="text-white font-bold text-xl">Manage Question #{managedQuestion.question_id}</h3>
-                    <button 
-                      onClick={() => handleDeleteQuestion(managedQuestion.question_id)}
-                      className="text-red-500 hover:bg-red-500/10 p-2 rounded-full transition-colors"
-                    >
-                      {actionLoading === `delete-q-${managedQuestion.question_id}` ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
-                    </button>
+                    <div className="flex gap-2">
+                      {!isEditing ? (
+                        <button 
+                          onClick={handleStartEditing}
+                          className="btn-secondary py-1.5 px-4 text-sm flex items-center gap-2"
+                        >
+                          Edit Question
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={handleCancelEditing}
+                          className="bg-gray-500/20 text-gray-300 hover:bg-gray-500/40 py-1.5 px-4 rounded-xl text-sm font-bold transition-all"
+                        >
+                          Discard Changes
+                        </button>
+                      )}
+                      <button 
+                        onClick={() => handleDeleteQuestion(managedQuestion.question_id)}
+                        className="text-red-500 hover:bg-red-500/10 p-2 rounded-full transition-colors"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid md:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-gray-400 text-sm ml-2">Title</label>
                       <input 
+                        disabled={!isEditing}
                         value={managedQuestion.title}
                         onChange={(e) => setManagedQuestion({...managedQuestion, title: e.target.value})}
-                        className="input-field w-full bg-[#2D2942]"
+                        className={`input-field w-full bg-[#2D2942] ${!isEditing ? 'opacity-70 border-transparent cursor-default' : ''}`}
                       />
                     </div>
                     <div className="space-y-2">
                       <label className="text-gray-400 text-sm ml-2">Topic</label>
-                      <input 
-                        value={managedQuestion.topic}
-                        onChange={(e) => setManagedQuestion({...managedQuestion, topic: e.target.value})}
-                        className="input-field w-full bg-[#2D2942]"
+                      {isEditing ? (
+                        <select 
+                          value={managedQuestion.topic}
+                          onChange={(e) => setManagedQuestion({...managedQuestion, topic: e.target.value})}
+                          className="input-field w-full bg-[#2D2942] appearance-none"
+                        >
+                          <option>Arrays</option>
+                          <option>Strings</option>
+                          <option>Hash Tables</option>
+                          <option>Linked Lists</option>
+                          <option>Trees</option>
+                          <option>Graphs</option>
+                          <option>Dynamic Programming</option>
+                        </select>
+                      ) : (
+                        <div className="input-field w-full bg-[#2D2942] opacity-70 border-transparent">
+                          {managedQuestion.topic}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Problem Statement Section */}
+                  <div className="space-y-2">
+                    <label className="text-gray-400 text-sm ml-2">Statement</label>
+                    {isEditing ? (
+                      <textarea 
+                        rows={6}
+                        value={managedQuestion.statement}
+                        onChange={(e) => setManagedQuestion({...managedQuestion, statement: e.target.value})}
+                        className="input-field w-full bg-[#2D2942] rounded-[20px] resize-none focus:ring-2 ring-[#E8B995]/50"
+                        placeholder="Describe the problem..."
+                      />
+                    ) : (
+                      <div className="prose prose-invert max-w-none text-md text-white bg-[#2D2942]/50 p-6 rounded-[24px] border border-white/5">
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}
+                          components={{
+                            // Manually style Ordered Lists (1, 2, 3)
+                            ol: ({node, ...props}) => (
+                              <ol className="list-decimal pl-8 mb-4 space-y-2 text-white" {...props} />
+                            ),
+                            // Manually style Unordered Lists (bullets)
+                            ul: ({node, ...props}) => (
+                              <ul className="list-disc pl-8 mb-4 space-y-2 text-white" {...props} />
+                            ),
+                            // Ensure list items are white and have proper spacing
+                            li: ({node, ...props}) => (
+                              <li className="text-white leading-relaxed" {...props} />
+                            ),
+                            // Ensure paragraphs don't squash the list
+                            p: ({node, ...props}) => (
+                              <p className="mb-4 last:mb-0 leading-relaxed" {...props} />
+                            )
+                          }}
+                        >
+                          {managedQuestion.statement}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+
+                  
+                  <div className="space-y-2">
+                    <label className="text-gray-400 text-sm ml-2">Python Code Template</label>
+                    <div className={`rounded-[24px] overflow-hidden border-2 transition-all ${
+                      isEditing ? 'border-[#E8B995]' : 'border-white/5'
+                    }`}>
+                      <CodeMirror
+                        value={managedQuestion.template}
+                        minHeight="150px"
+                        theme={dracula}
+                        extensions={[python()]}
+                        readOnly={!isEditing}
+                        editable={isEditing}
+                        basicSetup={{
+                          lineNumbers: true,
+                          indentOnInput: true,
+                        }}
+                        onChange={(value) => setManagedQuestion({ ...managedQuestion, template: value })}
                       />
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <label className="text-gray-400 text-sm ml-2">Difficulty</label>
-                    <div className="flex gap-3">
-                      {['Easy', 'Medium', 'Hard'].map((diff) => (
-                        <button
-                          key={diff}
-                          onClick={() => setManagedQuestion({...managedQuestion, difficulty: diff})}
-                          className={`flex-1 py-2 rounded-xl font-bold transition-all ${
-                            managedQuestion.difficulty === diff 
-                            ? 'bg-[#E8B995] text-[#4A4563]' 
-                            : 'bg-[#2D2942] text-white hover:bg-[#35304C]'
-                          }`}
-                        >
-                          {diff}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-gray-400 text-sm ml-2">Statement</label>
-                    <textarea 
-                      rows={4}
-                      value={managedQuestion.statement}
-                      onChange={(e) => setManagedQuestion({...managedQuestion, statement: e.target.value})}
-                      className="input-field w-full bg-[#2D2942] rounded-[20px] resize-none"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-gray-400 text-sm ml-2">Template</label>
-                    <textarea 
-                      rows={4}
-                      value={managedQuestion.template}
-                      onChange={(e) => setManagedQuestion({...managedQuestion, template: e.target.value})}
-                      className="input-field w-full bg-[#2D2942] rounded-[20px] font-mono text-sm resize-none"
-                    />
-                  </div>
-
-                  <button 
-                    onClick={handleUpdateQuestion}
-                    disabled={actionLoading === 'update-q'}
-                    className="w-full btn-secondary flex items-center justify-center gap-2 py-4 text-lg"
-                  >
-                    {actionLoading === 'update-q' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                    Save Changes
-                  </button>
+                  
+                  {isEditing && (
+                    <button 
+                      onClick={handleUpdateQuestion}
+                      disabled={actionLoading === 'update-q'}
+                      className="w-full btn-secondary flex items-center justify-center gap-2 py-4 text-lg animate-in slide-in-from-top-2"
+                    >
+                      {actionLoading === 'update-q' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                      Save Changes
+                    </button>
+                  )}
                 </div>
               )}
             </>
@@ -504,21 +630,29 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                   rows={4}
                   value={newQuestion.statement}
                   onChange={(e) => setNewQuestion({...newQuestion, statement: e.target.value})}
-                  placeholder="Describe the problem..."
+                  placeholder="Describe the problem (in MarkDown)..."
                   className="input-field w-full rounded-[24px] resize-none"
                 />
               </div>
 
               <div className="space-y-2">
-                <label className="text-gray-300 text-sm ml-2">Code Template</label>
-                <textarea 
-                  required
-                  rows={4}
-                  value={newQuestion.template}
-                  onChange={(e) => setNewQuestion({...newQuestion, template: e.target.value})}
-                  placeholder="Initial code for users..."
-                  className="input-field w-full rounded-[24px] font-mono text-sm resize-none"
-                />
+                <label className="text-gray-400 text-sm ml-2">Python Code Template</label>
+                <div className="rounded-[24px] overflow-hidden transition-all border-[#E8B995]">
+                  <CodeMirror
+                    value={newQuestion.template}
+                    minHeight="150px"
+                    maxHeight="200px"
+                    theme={dracula}
+                    extensions={[python()]}
+                    readOnly={false}
+                    editable={true}
+                    basicSetup={{
+                      lineNumbers: true,
+                      indentOnInput: true,
+                    }}
+                    onChange={(value) => setNewQuestion({ ...newQuestion, template: value })}
+                  />
+                </div>
               </div>
 
               <button 
