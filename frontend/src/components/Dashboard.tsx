@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogOut, User, ChevronRight, Users as UsersIcon, Check } from 'lucide-react';
+import { LogOut, User, Users as UsersIcon, Check } from 'lucide-react';
 
 interface DashboardProps {
   user: any;
@@ -33,6 +33,8 @@ export function Dashboard({ user, onStartMatching, onProfileClick, onLogout }: D
   const [selectedDifficulties, setSelectedDifficulties] = useState<string[]>([]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [activeUsersCount] = useState(Math.floor(Math.random() * 20) + 5); // Simulate active users
+
+  const isAdmin = user.role?.toLowerCase() === 'admin' || user.username === 'Root';
 
   const toggleDifficulty = (diffId: string) => {
     setSelectedDifficulties(prev => 
@@ -71,7 +73,14 @@ export function Dashboard({ user, onStartMatching, onProfileClick, onLogout }: D
               className="avatar-circle"
             />
             <div>
-              <h2 className="text-[#4A4563] font-bold text-xl">@{user.username}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-[#4A4563] font-bold text-xl">@{user.username}</h2>
+                {isAdmin && (
+                  <span className="bg-[#E8B995] text-[#4A4563] text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    Admin
+                  </span>
+                )}
+              </div>
               <p className="text-gray-600 text-sm">{user.email}</p>
             </div>
           </div>

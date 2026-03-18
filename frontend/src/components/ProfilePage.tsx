@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ArrowLeft, Edit2, Check, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { ArrowLeft, Edit2, Check, Loader2, AlertTriangle } from 'lucide-react';
+import { GATEWAY_URL } from '../constants';
 
 interface ProfilePageProps {
   user: any;
@@ -8,11 +9,10 @@ interface ProfilePageProps {
   onUpdate: (data: any) => void;
 }
 
-const GATEWAY_URL = 'http://localhost:1234';
-
 export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePageProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showPasswords, setShowPasswords] = useState(false);
   
@@ -27,6 +27,7 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
     confirmPassword: ''
   });
   
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [errors, setErrors] = useState<any>({});
   const [successMessage, setSuccessMessage] = useState('');
 
@@ -94,6 +95,30 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
     } catch (err: any) {
       setErrors({ currentPassword: err.message });
     } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setErrors({});
+    if (deleteConfirmText !== profileData.username) {
+      setErrors({ delete: 'Username does not match. Please try again.' });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('peerprep_token');
+      const response = await fetch(`${GATEWAY_URL}/users/${user.uid || user.UserID}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!response.ok) throw new Error('Failed to delete account');
+      
+      onLogout(); // Log them out immediately
+    } catch (err: any) {
+      setErrors({ delete: err.message });
       setIsLoading(false);
     }
   };
@@ -183,6 +208,50 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
               <div className="flex gap-3">
                 <button onClick={handleChangePassword} disabled={isLoading} className="bg-[#4A4563] text-white flex-1 py-3 rounded-full font-bold">Update</button>
                 <button onClick={() => setIsChangingPassword(false)} className="bg-white text-[#4A4563] flex-1 py-3 rounded-full font-bold border-2 border-[#4A4563]">Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* --- DANGER ZONE --- */}
+        <div className="bg-[#3A3552] border-2 border-red-500/30 rounded-[32px] p-8 mb-6">
+          <div className="flex items-center gap-3 mb-4">
+            <AlertTriangle className="w-6 h-6 text-red-500" />
+            <h3 className="text-white font-bold text-xl">Danger Zone</h3>
+          </div>
+          
+          {!isDeleting ? (
+            <div>
+              <p className="text-gray-400 mb-6">Once you delete your account, there is no going back. Please be certain.</p>
+              <button onClick={() => setIsDeleting(true)} className="w-full bg-red-500/10 text-red-500 py-3 rounded-full font-bold border-2 border-red-500 hover:bg-red-500 hover:text-white transition-colors">
+                Delete Account
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-gray-300">
+                To confirm deletion, type your username <span className="font-bold text-white">({profileData.username})</span> below:
+              </p>
+              <input
+                type="text"
+                placeholder={profileData.username}
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                className="input-field w-full bg-[#2D2942]"
+                disabled={isLoading}
+              />
+              {errors.delete && <p className="text-red-500 text-sm">{errors.delete}</p>}
+              <div className="flex gap-3 mt-4">
+                <button 
+                  onClick={handleDeleteAccount} 
+                  disabled={isLoading || deleteConfirmText !== profileData.username} 
+                  className="bg-red-500 text-white flex-1 py-3 rounded-full font-bold disabled:opacity-50 flex justify-center items-center gap-2"
+                >
+                  {isLoading && <Loader2 className="animate-spin w-4 h-4" />} Delete Forever
+                </button>
+                <button onClick={() => { setIsDeleting(false); setDeleteConfirmText(''); setErrors({}); }} className="bg-white text-[#4A4563] flex-1 py-3 rounded-full font-bold">
+                  Cancel
+                </button>
               </div>
             </div>
           )}

@@ -37,6 +37,7 @@ async def shutdown_event():
 # When running locally, use localhost. In Docker Compose later, use container names.
 SERVICES = {
     "users": "http://user-service:6767",
+    "admin": "http://user-service:6767",
     "question": "http://question-service:6768",
     # "matching": "http://matching-service:6769",
     "collab": "http://collab-service:4000",

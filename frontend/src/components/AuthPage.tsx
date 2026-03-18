@@ -2,12 +2,11 @@ import { useState } from 'react';
 import { ArrowLeft, Mail, Lock, User, Eye, EyeOff, CheckCircle, Loader2 } from 'lucide-react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
+import { GATEWAY_URL } from '../constants';
 
 interface AuthPageProps {
   onBack: () => void;
 }
-
-const GATEWAY_URL = 'http://localhost/api';
 
 export function AuthPage({ onBack }: AuthPageProps) {
   const [isLogin, setIsLogin] = useState(true);

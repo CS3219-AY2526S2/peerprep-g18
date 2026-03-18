@@ -86,9 +86,10 @@ async def read_question(question_id: str):
 @router.post("/", response_model=Question, status_code=status.HTTP_201_CREATED)
 async def create_question(
     question: QuestionCreate, 
-    x_user_role: str = Header(...)
+    x_user_role: Optional[str] = Header(None)
 ):
-    x_user_role = x_user_role.strip().lower()
+    if x_user_role:
+        x_user_role = x_user_role.strip().lower()
     verify_admin(x_user_role)
 
     questions_ref = db.collection("questions")
@@ -116,7 +117,8 @@ async def update_question(
     question_update: QuestionUpdate, 
     x_user_role: Optional[str] = Header(None)
 ):
-    x_user_role = x_user_role.strip().lower()
+    if x_user_role:
+        x_user_role = x_user_role.strip().lower()
     verify_admin(x_user_role)
 
     doc_ref = db.collection("questions").document(question_id)
@@ -139,6 +141,7 @@ async def update_question(
     doc_ref.update(update_data)
 
     updated_doc = doc_ref.get().to_dict()
+    updated_doc["question_id"] = doc_ref.id
     return updated_doc
 
 
@@ -148,7 +151,8 @@ async def delete_question(
     question_id: str, 
     x_user_role: Optional[str] = Header(None)
 ):
-    x_user_role = x_user_role.strip().lower()
+    if x_user_role:
+        x_user_role = x_user_role.strip().lower()
     verify_admin(x_user_role)
 
     doc_ref = db.collection("questions").document(question_id)

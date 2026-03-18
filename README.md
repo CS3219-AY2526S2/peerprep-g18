@@ -28,10 +28,13 @@ peerprep-g18/
   docs/
     images/
       ...
+    plantUML/
+      ...
     README.md
     UML.md
     SCHEMA.md
     BACKLOG.md
+    API.md
 
   frontend/
     src/

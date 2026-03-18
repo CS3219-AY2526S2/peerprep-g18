@@ -11,7 +11,7 @@ This document defines the RESTful APIs for the PeerPrep microservices. These API
 ### Endpoints
 
 #### `POST /users`
-Create a new user profile and identity.
+Create a new user profile and identity. Sends a verification email upon creation.
 - **Request Body:**
   ```json
   {
@@ -30,8 +30,6 @@ Create a new user profile and identity.
 
 #### `GET /users/{user_id}`
 Retrieve a user's profile by their unique ID.
-- **Headers:**
-  - `X-User-Id`: (Internal) Injected by API Gateway for authorization checks if needed.
 - **Responses:**
   - `200 OK`: Returns the user profile object.
   - `404 Not Found`: User profile does not exist.
@@ -69,15 +67,43 @@ Permanently delete a user's identity and profile.
   - `403 Forbidden`: Unauthorized.
   - `404 Not Found`: User does not exist.
 
+### Admin Endpoints
+
+#### `GET /admin/users`
+Retrieve all user profiles.
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Responses:**
+  - `200 OK`: Returns a list of user profiles.
+  - `403 Forbidden`: Not an admin.
+
+#### `POST /admin/promote/{target_user_id}`
+Promote a user to Admin role.
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Responses:**
+  - `200 OK`: Promotion successful.
+  - `403 Forbidden`: Not an admin.
+  - `404 Not Found`: User does not exist.
+
+#### `DELETE /admin/users/{user_id}`
+Delete any user account (except Root).
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Responses:**
+  - `200 OK`: Deletion successful.
+  - `403 Forbidden`: Not an admin or trying to delete Root.
+  - `404 Not Found`: User does not exist.
+
 ---
 
 ## 2. Question Service
-**Base URL:** `http://question-service:6768`  
+**Base URL:** `http://question-service:6768/question`  
 **Purpose:** Manages a repository of technical questions categorized by topic and difficulty.
 
 ### Endpoints
 
-#### `GET /question`
+#### `GET /`
 Retrieve a random question ID based on topic and difficulty.
 - **Query Parameters:**
   - `topic`: (Required) e.g., "Array", "String"
@@ -86,16 +112,16 @@ Retrieve a random question ID based on topic and difficulty.
   - `200 OK`: `{"question_id": "string"}`
   - `404 Not Found`: No questions match the criteria.
 
-#### `GET /question/{question_id}`
+#### `GET /{question_id}`
 Retrieve a specific question by its ID.
 - **Responses:**
   - `200 OK`: Returns the question details.
   - `404 Not Found`: Question ID does not exist.
 
-#### `POST /question` (Admin Only)
+#### `POST /` (Admin Only)
 Add a new question to the repository.
 - **Headers:**
-  - `X-User-Role`: (Required) Must be `"admin"`.
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
 - **Request Body:**
   ```json
   {
@@ -111,20 +137,26 @@ Add a new question to the repository.
   - `201 Created`: Question added successfully.
   - `403 Forbidden`: Not an admin.
 
-#### `PUT /question/{question_id}` (Admin Only)
+#### `PUT /{question_id}` (Admin Only)
 Update an existing question.
 - **Headers:**
-  - `X-User-Role`: (Required) Must be `"admin"`.
-- **Request Body:** Partial or full question object.
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Request Body (Partial update supported):**
+  ```json
+  {
+    "title": "New Title",
+    "topic": "New Topic"
+  }
+  ```
 - **Responses:**
   - `200 OK`: Update successful.
   - `403 Forbidden`: Not an admin.
   - `404 Not Found`: Question does not exist.
 
-#### `DELETE /question/{question_id}` (Admin Only)
+#### `DELETE /{question_id}` (Admin Only)
 Remove a question from the repository.
 - **Headers:**
-  - `X-User-Role`: (Required) Must be `"admin"`.
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
 - **Responses:**
   - `204 No Content`: Deletion successful.
   - `403 Forbidden`: Not an admin.
@@ -134,9 +166,8 @@ Remove a question from the repository.
 
 ## 3. Matching Service
 **Base URL:** `http://matching-service:6769`  
+**Status:** Currently simulated in the frontend. Planned as a standalone service.
 **Purpose:** A generic matching engine that pairs two entities based on shared requirements. It is stateless regarding sessions; it simply notifies an orchestrator via Redis Pub/Sub when a match is successfully made.
-
-### Endpoints
 
 #### `POST /find-pair`
 Enqueue an entity to be matched. The engine looks for another entity where at least one value in `criteria_1_options` and one value in `criteria_2_options` overlap.
@@ -156,60 +187,20 @@ Enqueue an entity to be matched. The engine looks for another entity where at le
 Remove an entity from the matching queue.
 - **Responses:**
   - `200 OK`: Successfully removed from queue.
-  - `404 Not Found`: Entity was not in the queue.
-
-### Async Notifications (Redis Pub/Sub)
-- **Channel:** `match_events`
-- **Payload:**
-  ```json
-  {
-    "entity_1_id": "string",
-    "entity_2_id": "string",
-    "matched_criteria_1": 5,
-    "matched_criteria_2": 2
-  }
-  ```
 
 ---
 
-## 4. Editor Service
-**Base URL:** `http://editor-service:4001`  
-**Purpose:** Specialized service for real-time collaborative text/code editing. Optimized for high-frequency deltas.
+## 3. Collaboration Service
+**Base URL:** `http://collab-service:4000`  
+**Purpose:** Specialized service for real-time collaborative text/code editing and chat.
 
 ### WebSocket (Socket.io)
-- **Path:** `/socket.io/editor`
-- **Handshake Query:** `?sessionId=xyz`
-- **Headers:** `X-User-Id`
 
-#### Events
-- `code_change`: `{ delta: any, version: number }` - Client sends a change.
-- `code_update`: `{ delta: any, version: number, user_id: string }` - Server broadcasts change.
+#### Client-to-Server Events
+- `join-session`: `{ sessionId: string, username: string }` - Join an isolated session room.
+- `code-change`: `{ sessionId: string, code: string }` - Broadcast code changes to the partner.
+- `send-message`: `{ sessionId: string, message: { sender: string, text: string } }` - Send a chat message.
 
-### REST Endpoints
-#### `GET /editor/sessions/{sessionId}`
-Retrieve the full current state of the code.
-- **Responses:**
-  - `200 OK`: `{ "code": "string", "version": 105 }`
-  - `404 Not Found`: Session expired.
-
----
-
-## 5. Chat Service
-**Base URL:** `http://chat-service:4002`  
-**Purpose:** Specialized service for real-time messaging. Optimized for discrete message objects and history.
-
-### WebSocket (Socket.io)
-- **Path:** `/socket.io/chat`
-- **Handshake Query:** `?sessionId=xyz`
-- **Headers:** `X-User-Id`
-
-#### Events
-- `send_message`: `{ text: "string" }` - Client sends a message.
-- `receive_message`: `{ id: "uuid", text: "string", user_id: "string", timestamp: "iso_date" }` - Server broadcasts.
-
-### REST Endpoints
-#### `GET /chat/sessions/{sessionId}`
-Retrieve the message history for the session.
-- **Responses:**
-  - `200 OK`: `[ { "id": "...", "text": "...", ... }, ... ]`
-  - `404 Not Found`: Session expired.
+#### Server-to-Client Events
+- `code-update`: `code: string` - Received code from the partner.
+- `receive-message`: `{ sender: string, text: string, time: string }` - Received a message from the partner.

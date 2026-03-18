@@ -23,4 +23,4 @@ EXPOSE 6768
 
 # Run uvicorn. Note the 'app.main:app' syntax 
 # because main.py is inside the 'app/' folder.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6768"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6768", "--reload"]

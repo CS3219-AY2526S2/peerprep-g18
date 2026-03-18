@@ -208,21 +208,82 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
 
     return {"message": "User profile updated successfully"}
 
+# --- DELETE USER (Self) ---
 @app.delete("/users/{user_id}")
-def delete_user(user_id: str, x_user_id: str = Header(...)):
+def delete_self(user_id: str, x_user_id: str = Header(...)):
     """
-    Endpoint for deleting a user.
-    Checks if the authenticated user matches the user_id being deleted, then
-    deletes the user from Firebase Auth and Firestore.
+    Endpoint for users to delete their own account.
     """
     if x_user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this profile")
     
+    return perform_delete(user_id)
+
+# --- DELETE USER (Admin) ---
+@app.delete("/admin/users/{user_id}")
+def delete_user_admin(user_id: str, x_user_role: str = Header(None)):
+    """
+    Endpoint for admins to delete any account (except Root).
+    """
+    role_check = x_user_role.strip().lower() if x_user_role else ""
+    if role_check not in ["admin", "root"]:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return perform_delete(user_id)
+
+def perform_delete(user_id: str):
+    doc_ref = db.collection('Users').document(user_id)
+    doc = doc_ref.get()
+
+    if doc.exists and doc.to_dict().get("role") == "Root":
+        raise HTTPException(status_code=403, detail="The Root admin cannot be deleted")
+    
     try:
         auth.delete_user(user_id)
         db.collection('Users').document(user_id).delete()
-        return {"message": f"User {user_id} deleted successfully from Auth and Database"}
+        return {"message": f"User {user_id} deleted successfully"}
     except auth.UserNotFoundError:
         raise HTTPException(status_code=404, detail="User not found in Firebase Auth")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- GET ALL USERS ---
+@app.get("/admin/users")
+def get_all_users(x_user_role: str = Header(None)):
+    # 🔴 FIX: Allow both Admin and Root to view the dashboard
+    role_check = x_user_role.strip().lower() if x_user_role else ""
+    if role_check not in ["admin", "root"]:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users_ref = db.collection('Users')
+    all_users = []
+    
+    for doc in users_ref.stream():
+        all_users.append(doc.to_dict())
+            
+    return all_users
+
+
+# --- PROMOTE USER ---
+@app.post("/admin/promote/{target_user_id}")
+def promote_user(target_user_id: str, x_user_role: str = Header(None)):
+    # 🔴 FIX: Allow both Admin and Root to promote users
+    role_check = x_user_role.strip().lower() if x_user_role else ""
+    if role_check not in ["admin", "root"]:
+        raise HTTPException(status_code=403, detail="Admin access required")
+        
+    doc_ref = db.collection('Users').document(target_user_id)
+    doc = doc_ref.get()
+    
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    current_role = doc.to_dict().get("role")
+    if current_role == "Admin" or current_role == "Root":
+        return {"message": f"User is already an {current_role}"}
+        
+    doc_ref.update({"role": "Admin"})
+    auth.set_custom_user_claims(target_user_id, {'role': "Admin"})
+    
+    return {"message": "User promoted to Admin successfully"}
