@@ -50,25 +50,18 @@ PUBLIC_ROUTES = [
 ]
 
 async def verify_token(request: Request):
-    """Checks the Authorization header and returns the decoded Firebase token."""
     auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    
-    token = auth_header.split(" ")[1]
-    
-    try:
-        decoded_token = auth.verify_id_token(token)
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+    if not auth_header:
+        raise HTTPException(status_code=401, detail="Missing Header")
 
-    if not decoded_token.get("email_verified"):
-        raise HTTPException(
-            status_code=403, 
-            detail="Email not verified. Please check your inbox."
-        )
-    
-    return decoded_token
+    token = auth_header.split(" ")[1]
+
+    try:
+        decoded_token = auth.verify_id_token(token, clock_skew_seconds=30)
+        return decoded_token
+    except Exception as e:
+        print(f"❌ FIREBASE ERROR: {str(e)}")
+        raise HTTPException(status_code=401, detail=f"Auth Failed: {str(e)}")
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def gateway_proxy(request: Request, path: str):

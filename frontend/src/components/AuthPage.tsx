@@ -6,9 +6,10 @@ import { GATEWAY_URL } from '../constants';
 
 interface AuthPageProps {
   onBack: () => void;
+  onLoginSuccess: (uid: string, token: string) => void;
 }
 
-export function AuthPage({ onBack }: AuthPageProps) {
+export function AuthPage({ onBack, onLoginSuccess }: AuthPageProps) {
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -85,6 +86,10 @@ export function AuthPage({ onBack }: AuthPageProps) {
             await auth.signOut();
             throw new Error('Please verify your email before logging in. Check your inbox!');
           }
+
+          // Force a fresh token so custom claims (role) are included and gateway verification succeeds
+          const token = await firebaseUser.getIdToken(true);
+          onLoginSuccess(firebaseUser.uid, token);
 
         } else {
           // --- 2. REGISTRATION FLOW ---
