@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
+import { DynamicArrayInput } from './ui/DynamicArrayInput';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -419,29 +420,23 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
 
               {/* Managed Question Details */}
               {managedQuestion && (
-                <div className="bg-[#3A3552] rounded-[32px] p-8 space-y-6 border-2 border-[#E8B995]/20 animate-in fade-in slide-in-from-bottom-4">
+                <div className="bg-[#3A3552] rounded-[32px] p-8 space-y-8 border-2 border-[#E8B995]/20 animate-in fade-in slide-in-from-bottom-4">
+                  
                   <div className="flex justify-between items-start">
-                    <h3 className="text-white font-bold text-xl">Manage Question #{managedQuestion.question_id}</h3>
+                    <div>
+                      <h3 className="text-white font-bold text-xl">Question #{managedQuestion.question_id}</h3>
+                    </div>
                     <div className="flex gap-2">
                       {!isEditing ? (
-                        <button 
-                          onClick={handleStartEditing}
-                          className="btn-secondary py-1.5 px-4 text-sm flex items-center gap-2"
-                        >
-                          Edit Question
+                        <button onClick={handleStartEditing} className="btn-secondary py-1.5 px-4 text-sm flex items-center gap-2">
+                          <Plus className="w-4 h-4 rotate-45" /> Edit Question
                         </button>
                       ) : (
-                        <button 
-                          onClick={handleCancelEditing}
-                          className="bg-gray-500/20 text-gray-300 hover:bg-gray-500/40 py-1.5 px-4 rounded-xl text-sm font-bold transition-all"
-                        >
+                        <button onClick={handleCancelEditing} className="bg-gray-500/20 text-gray-300 hover:bg-gray-500/40 py-1.5 px-4 rounded-xl text-sm font-bold transition-all">
                           Discard Changes
                         </button>
                       )}
-                      <button 
-                        onClick={() => handleDeleteQuestion(managedQuestion.question_id)}
-                        className="text-red-500 hover:bg-red-500/10 p-2 rounded-full transition-colors"
-                      >
+                      <button onClick={() => handleDeleteQuestion(managedQuestion.question_id)} className="text-red-500 hover:bg-red-500/10 p-2 rounded-full transition-colors">
                         <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
@@ -449,7 +444,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
 
                   <div className="grid md:grid-cols-2 gap-6">
                     <div className="space-y-2">
-                      <label className="text-gray-400 text-sm ml-2">Title</label>
+                      <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Title</label>
                       <input 
                         disabled={!isEditing}
                         value={managedQuestion.title}
@@ -458,7 +453,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-gray-400 text-sm ml-2">Topic</label>
+                      <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Topic</label>
                       {isEditing ? (
                         <select 
                           value={managedQuestion.topic}
@@ -475,52 +470,31 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                           <option>Dynamic Programming</option>
                         </select>
                       ) : (
-                        <div className="input-field w-full bg-[#2D2942] opacity-70 border-transparent">
-                          {managedQuestion.topic}
-                        </div>
+                        <div className="input-field w-full bg-[#2D2942] opacity-70 border-transparent">{managedQuestion.topic}</div>
                       )}
                     </div>
                   </div>
 
-                  {/* Problem Statement Section */}
+                  {/* Problem Statement */}
                   <div className="space-y-2">
-                    <label className="text-gray-400 text-sm ml-2">Statement</label>
+                    <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Problem Statement</label>
                     {isEditing ? (
                       <textarea 
                         rows={6}
                         value={managedQuestion.statement}
                         onChange={(e) => setManagedQuestion({...managedQuestion, statement: e.target.value})}
                         className="input-field w-full bg-[#2D2942] rounded-[20px] resize-none focus:ring-2 ring-[#E8B995]/50"
-                        placeholder="Describe the problem..."
                       />
                     ) : (
-                      <div className="prose prose-invert max-w-none text-md text-white bg-[#2D2942]/50 p-6 rounded-[24px] border border-white/5">
-                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}
+                      <div className="prose prose-invert max-w-none text-white bg-[#2D2942]/50 p-6 rounded-[24px] border border-white/5">
+                        <ReactMarkdown 
+                          remarkPlugins={[remarkMath]} 
+                          rehypePlugins={[rehypeKatex]}
                           components={{
-                            // Manually style Ordered Lists (1, 2, 3)
-                            ol: ({node, ...props}) => (
-                              <ol className="list-decimal pl-8 mb-4 space-y-2 text-white" {...props} />
-                            ),
-                            // Manually style Unordered Lists (bullets)
-                            ul: ({node, ...props}) => (
-                              <ul className="list-disc pl-8 mb-4 space-y-2 text-white" {...props} />
-                            ),
-                            // Ensure list items are white and have proper spacing
-                            li: ({node, ...props}) => (
-                              <li className="text-white leading-relaxed" {...props} />
-                            ),
-                            
-                            
-                            p: ({node, ...props}) => (
-                              <p 
-                                // Ensure paragraphs don't squash the list
-                                // break-words: This is the magic class that fixes your screenshot issue
-                                // whitespace-pre-wrap: This ensures manual line breaks you type are respected
-                                className="mb-4 last:mb-0 leading-relaxed break-words whitespace-pre-wrap" 
-                                {...props} 
-                              />
-                            )
-                            
+                            ol: ({node, ...props}) => <ol className="list-decimal pl-8 mb-4 space-y-2 text-white" {...props} />,
+                            ul: ({node, ...props}) => <ul className="list-disc pl-8 mb-4 space-y-2 text-white" {...props} />,
+                            li: ({node, ...props}) => <li className="text-white leading-relaxed" {...props} />,
+                            p: ({node, ...props}) => <p className="mb-4 last:mb-0 leading-relaxed break-words whitespace-pre-wrap" {...props} />
                           }}
                         >
                           {managedQuestion.statement}
@@ -529,34 +503,53 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     )}
                   </div>
 
-                  
+                  <div className="space-y-10">
+  
+                    <DynamicArrayInput 
+                      label="Examples" 
+                      items={managedQuestion.examples || ['']} 
+                      isEditing={isEditing}
+                      minRows={4}
+                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, examples: val})} 
+                    />
+
+                    <DynamicArrayInput 
+                      label="Constraints" 
+                      items={managedQuestion.constraints || ['']} 
+                      isEditing={isEditing}
+                      minRows={2}
+                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, constraints: val})} 
+                    />
+
+                    <DynamicArrayInput 
+                      label="Hints" 
+                      items={managedQuestion.hints || ['']} 
+                      isEditing={isEditing}
+                      minRows={2}
+                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, hints: val})} 
+                    />
+                  </div>
+
+                  {/* Code Template */}
                   <div className="space-y-2">
-                    <label className="text-gray-400 text-sm ml-2">Python Code Template</label>
-                    <div className={`rounded-[24px] overflow-hidden border-2 transition-all ${
-                      isEditing ? 'border-[#E8B995]' : 'border-white/5'
-                    }`}>
+                    <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Python Code Template</label>
+                    <div className={`rounded-[24px] overflow-hidden border-2 transition-all ${isEditing ? 'border-[#E8B995]' : 'border-white/5'}`}>
                       <CodeMirror
                         value={managedQuestion.template}
                         minHeight="150px"
                         theme={dracula}
                         extensions={[python()]}
                         readOnly={!isEditing}
-                        editable={isEditing}
-                        basicSetup={{
-                          lineNumbers: true,
-                          indentOnInput: true,
-                        }}
                         onChange={(value) => setManagedQuestion({ ...managedQuestion, template: value })}
                       />
                     </div>
                   </div>
 
-                  
                   {isEditing && (
                     <button 
                       onClick={handleUpdateQuestion}
                       disabled={actionLoading === 'update-q'}
-                      className="w-full btn-secondary flex items-center justify-center gap-2 py-4 text-lg animate-in slide-in-from-top-2"
+                      className="w-full btn-secondary flex items-center justify-center gap-2 py-4 text-lg"
                     >
                       {actionLoading === 'update-q' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                       Save Changes
@@ -663,6 +656,29 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     onChange={(value) => setNewQuestion({ ...newQuestion, template: value })}
                   />
                 </div>
+              </div>
+
+              <div className="space-y-8">
+                <DynamicArrayInput 
+                  label="Examples" 
+                  items={newQuestion.examples} 
+                  minRows={4} 
+                  onUpdate={(val: string[]) => setNewQuestion({...newQuestion, examples: val})} 
+                />
+
+                <DynamicArrayInput 
+                  label="Constraints" 
+                  items={newQuestion.constraints} 
+                  minRows={2} 
+                  onUpdate={(val: string[]) => setNewQuestion({...newQuestion, constraints: val})} 
+                />
+
+                <DynamicArrayInput 
+                  label="Hints" 
+                  items={newQuestion.hints} 
+                  minRows={2} 
+                  onUpdate={(val: string[]) => setNewQuestion({...newQuestion, hints: val})} 
+                />
               </div>
 
               <button 
