@@ -1,0 +1,71 @@
+@startuml Collaboration to History — Session Cleanup
+!theme plain
+skinparam responseMessageBelowArrow true
+
+title Collaboration → History Service — Session End & Cleanup
+
+actor "User A" as UA
+actor "User B" as UB
+participant "Collab Service\n(Socket.IO)" as Collab
+participant "API Gateway" as GW
+participant "History Service" as HS
+database "Redis\n(Sessions)" as Redis
+database "Firestore\n(session_history)" as FS
+
+== Active Session ==
+
+UA <-> Collab: Yjs editor + chat (WebSocket)
+UB <-> Collab: Yjs editor + chat (WebSocket)
+
+note over Collab, Redis
+  During the session, every code edit triggers:
+  - RPUSH session:{id}:ydoc (Yjs binary update)
+  - SET session:{id}:finalCode (plaintext snapshot)
+  Chat messages are stored in session:{id}:chat
+end note
+
+== User A Disconnects ==
+
+UA ->x Collab: WebSocket disconnect
+Collab -> Collab: Remove User A from\nconnectedEditors set
+Collab -> UB: emit 'user-left'\n{userId, message}
+
+note over Collab: connectedEditors.size == 1\nNo cleanup timer started
+
+== User B Disconnects ==
+
+UB ->x Collab: WebSocket disconnect
+Collab -> Collab: Remove User B from\nconnectedEditors set
+Collab -> Collab: connectedEditors.size == 0\nStart 30-second cleanup timer
+
+note over Collab: If either user reconnects\nwithin 30s, timer is cancelled
+
+== 30 Seconds Later (No Reconnect) ==
+
+Collab -> GW: POST /internal/collab/session-ended/{sessionId}
+activate GW
+
+GW -> Redis: GET session:{id}:meta
+Redis --> GW: {user1_id, user2_id,\nquestionId, topic, difficulty, startedAt}
+
+GW -> Redis: GET session:{id}:finalCode
+Redis --> GW: "function hello() { ... }"
+
+GW -> GW: Build history payload\n{...meta, finalCode, endedAt}
+
+GW -> HS: POST /history
+activate HS
+HS -> FS: Set document(sessionId)\nin session_history collection
+FS --> HS: OK
+HS --> GW: 201 Created
+deactivate HS
+
+GW -> Redis: DELETE session:{id}:meta\nsession:{id}:finalCode\nsession:{id}:ydoc\nsession:{id}:chat
+Redis --> GW: OK
+
+GW --> Collab: 200 {detail: "Session ended\nand history saved"}
+deactivate GW
+
+Collab -> Collab: sessions.delete(sessionId)\n(remove from in-memory Map)
+
+@enduml

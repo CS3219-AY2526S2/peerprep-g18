@@ -190,17 +190,174 @@ Remove an entity from the matching queue.
 
 ---
 
-## 3. Collaboration Service
-**Base URL:** `http://collab-service:4000`  
-**Purpose:** Specialized service for real-time collaborative text/code editing and chat.
+## 4. Collaboration Service
+**Base URL:** `http://collab-service:4000`
+**Purpose:** Real-time collaborative code editing (Yjs CRDT) and chat over Socket.IO. Ticket-based authentication — each connection requires a one-time ticket obtained from the API Gateway.
 
-### WebSocket (Socket.io)
+### API Gateway Endpoints (Collab-related)
+
+These endpoints live in the API Gateway but serve the collaboration flow.
+
+#### `GET /matching/events`
+Subscribe to Server-Sent Events for match notifications.
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Response:** `text/event-stream`
+  ```
+  data: {"event": "connected"}
+  data: {"event": "match_found", "sessionId": "uuid", "questionId": "1"}
+  data: {"event": "timeout"}
+  ```
+
+#### `GET /collab/session/{sessionId}`
+Retrieve session metadata. Only accessible by session members.
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Responses:**
+  - `200 OK`:
+    ```json
+    {
+      "sessionId": "uuid",
+      "questionId": "1",
+      "topic": "Strings",
+      "difficulty": "Easy",
+      "user1_id": "uid_A",
+      "user2_id": "uid_B",
+      "startedAt": 1774017000.0
+    }
+    ```
+  - `403 Forbidden`: Not a member of this session.
+  - `404 Not Found`: Session does not exist or has expired.
+
+#### `POST /collab/join`
+Issue a one-time WebSocket ticket. Tickets expire after 60 seconds and are single-use. Get one ticket per namespace connection (editor + chat = 2 tickets).
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Request Body:**
+  ```json
+  {
+    "sessionId": "uuid"
+  }
+  ```
+- **Responses:**
+  - `200 OK`: `{"ticket": "one-time-UUID"}`
+  - `400 Bad Request`: Missing sessionId.
+  - `403 Forbidden`: Not a member of this session.
+  - `404 Not Found`: Session does not exist.
+
+### WebSocket — Editor Namespace (`/editor`)
+
+Connect via Socket.IO to `http://localhost/editor` with `path: '/socket.io'` and `query: { ticket }`.
+
+Ticket is validated by the collab service on connection. On success, `userId` and `sessionId` are attached to the socket.
 
 #### Client-to-Server Events
-- `join-session`: `{ sessionId: string, username: string }` - Join an isolated session room.
-- `code-change`: `{ sessionId: string, code: string }` - Broadcast code changes to the partner.
-- `send-message`: `{ sessionId: string, message: { sender: string, text: string } }` - Send a chat message.
+- `yjs-update`: `Uint8Array` — Send local Yjs document changes to the server. The server persists the update and broadcasts to the partner.
 
 #### Server-to-Client Events
-- `code-update`: `code: string` - Received code from the partner.
-- `receive-message`: `{ sender: string, text: string, time: string }` - Received a message from the partner.
+- `yjs-sync`: `Uint8Array` — Full document state sent on connect (or reconnect).
+- `yjs-update`: `Uint8Array` — Incremental update from the partner.
+- `user-joined`: `{ userId: string }` — Partner has connected.
+- `user-left`: `{ userId: string, message: string }` — Partner has disconnected. Message: `"Your partner has left. Editing is disabled."`
+
+#### Frontend Integration
+```javascript
+import * as Y from 'yjs'
+import { io } from 'socket.io-client'
+
+const ydoc = new Y.Doc()
+const ytext = ydoc.getText('code')
+
+const editorSocket = io('http://localhost/editor', {
+  path: '/socket.io',
+  query: { ticket: '<ticket>' },
+  transports: ['websocket'],
+})
+
+editorSocket.on('yjs-sync', (update) => Y.applyUpdate(ydoc, new Uint8Array(update)))
+editorSocket.on('yjs-update', (update) => Y.applyUpdate(ydoc, new Uint8Array(update), 'remote'))
+ydoc.on('update', (update, origin) => {
+  if (origin !== 'remote') editorSocket.emit('yjs-update', update)
+})
+```
+
+The shared text type is `ydoc.getText('code')`. Bind this to your code editor (e.g., `y-monaco` for Monaco, `y-codemirror.next` for CodeMirror).
+
+### WebSocket — Chat Namespace (`/chat`)
+
+Connect via Socket.IO to `http://localhost/chat` with `path: '/socket.io'` and `query: { ticket }`.
+
+#### Client-to-Server Events
+- `send-message`: `{ text: string }` — Send a chat message. HTML tags (`<>`) are stripped server-side.
+
+#### Server-to-Client Events
+- `chat-history`: `[{ sender, text, time }]` — Last 50 messages, sent on connect.
+- `receive-message`: `{ sender: string, text: string, time: string }` — New message from either user. Time format: `"HH:MM"`.
+
+#### Frontend Integration
+```javascript
+const chatSocket = io('http://localhost/chat', {
+  path: '/socket.io',
+  query: { ticket: '<ticket>' },
+  transports: ['websocket'],
+})
+
+chatSocket.on('chat-history', (messages) => { /* render history */ })
+chatSocket.on('receive-message', ({ sender, text, time }) => { /* append */ })
+chatSocket.emit('send-message', { text: 'Hello!' })
+```
+
+### Reconnect Flow
+
+On disconnect, get a new ticket before reconnecting:
+```javascript
+editorSocket.on('disconnect', async () => {
+  const res = await fetch('/api/collab/join', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId })
+  })
+  const { ticket } = await res.json()
+  editorSocket.io.opts.query.ticket = ticket
+  editorSocket.connect()
+})
+```
+
+### Session Lifecycle
+1. Match found → `sessionId` created in Redis (2h TTL)
+2. Both users connect (editor + chat)
+3. Real-time collaboration (Yjs + chat)
+4. Both users disconnect → 30-second grace period
+5. If no reconnect → session saved to Firestore, Redis keys cleaned up
+
+---
+
+## 5. History Service
+**Base URL:** `http://history-service:6770`
+**Purpose:** Persists completed session records to Firestore. Called internally by the API Gateway after a session ends (not exposed to frontend directly).
+
+### Endpoints
+
+#### `POST /history`
+Save a completed session record to Firestore.
+- **Request Body:**
+  ```json
+  {
+    "sessionId": "uuid",
+    "user1_id": "uid_A",
+    "user2_id": "uid_B",
+    "questionId": "1",
+    "topic": "Strings",
+    "difficulty": "Easy",
+    "finalCode": "function hello() { return 'world' }",
+    "startedAt": 1774017000.0,
+    "endedAt": 1774020600.0
+  }
+  ```
+- **Responses:**
+  - `201 Created`: `{"detail": "saved"}`
+
+#### `GET /history/{user_id}`
+Retrieve all session records for a given user.
+- **Responses:**
+  - `200 OK`: Returns an array of session records where the user was either `user1_id` or `user2_id`.

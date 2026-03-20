@@ -74,8 +74,14 @@ peerprep-g18/
     matching-service/
       ...
     collaboration-service/
-      server.js
+      server.js                       (Yjs editor + chat over Socket.IO)
+      package.json
       Dockerfile
+    history-service/
+      main.py                         (FastAPI — saves sessions to Firestore)
+      requirements.txt
+      Dockerfile
+      firebase-history-account.json   (.gitignore but needed to run locally)
 ```
 
 ---
@@ -93,6 +99,7 @@ peerprep-g18/
    ```
    - Firebase Service Account: You must have a `firebase-service-account.json` file in both `backend/api-gateway/` and `backend/user-service/`.
    - Firebase Question Service: You must have `firebase-questionservice.json` in `backend/question-service`.
+   - Firebase History Service: You must have `firebase-history-account.json` in `backend/history-service/`.
    - Environment Variables: Ensure `backend/user-service/.env` contains your `SMTP_EMAIL` and `SMTP_PASSWORD` for verification emails.
 
 ### 2. Running the Backend Services
@@ -112,7 +119,11 @@ peerprep-g18/
    - User Service manages profile data in Firestore on port `6767`.
    - Question Service manages question data in Firestore on port `6768`.
    - Matching Service manages event-based user matching on port `6769`.
-   - Collaboration Service (Internal) manages real-time sockets on port `4000`.
+   - Collaboration Service (Internal) manages real-time code editing (Yjs) and chat over Socket.IO on port `4000`.
+   - History Service (Internal) saves completed session records to Firestore on port `6770`.
+   - Redis Sessions stores session metadata, tickets, and Yjs state.
+   - Redis Event Bus handles pub/sub between matching service and API gateway.
+   - Redis Matching manages the matching queue.
 
 ### 3. Running the Frontend
   The frontend is a React application built with Vite.

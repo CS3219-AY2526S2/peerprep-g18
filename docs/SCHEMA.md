@@ -53,25 +53,44 @@ Notes:
 
 ---
 
-## N2: Question History (Schema) (Nice-to-have)
+## M4: Session History (Schema) — Firestore
 
-Planned table: `QuestionHistory` (or `SessionsHistory`)
+Collection: `session_history` (History Service — Firestore)
 
 | Field | Type | Remarks |
 |---|---|---|
-| `SessionID` | UUID | Primary Key (Unique) |
-| `User1ID` | UUID | Foreign Key* (M1) |
-| `User2ID` | UUID | Foreign Key* (M1) |
-| `QuestionID` | UUID | Foreign Key* (M3) |
-| `TimeStamp` | DateTime | Session time marker (exact semantics TBD) |
-| `AttemptedCode` | String | Captured code attempt (format/storage TBD) |
+| `sessionId` | String (UUID) | Document ID |
+| `user1_id` | String | Firebase UID of first matched user |
+| `user2_id` | String | Firebase UID of second matched user |
+| `questionId` | String | Foreign Key* (M3) |
+| `topic` | String | e.g., “Strings” |
+| `difficulty` | String | e.g., “Easy” |
+| `finalCode` | String | Final code snapshot at session end |
+| `startedAt` | Float (Unix timestamp) | Session start time |
+| `endedAt` | Float (Unix timestamp) | Session end time (after 30s grace period) |
 
 Notes:
-- This supports the Nice-to-have direction “question attempt history” (storing attempts + metadata so users can review later). 
-- `AttemptedCode` storage may change (e.g., size limits, compression, versioning, or storing references to object storage) depending on collaboration/editor integration. 
+- Stored in Firestore via the History Service (`backend/history-service/`).
+- Records are created automatically when both users disconnect and the 30-second grace period expires.
+- `finalCode` is a plaintext snapshot of the Yjs shared document at the time of session end.
+- Queried by `user1_id` or `user2_id` to retrieve a user's session history.
+
+## M4: Session State (Schema) — Redis (Ephemeral)
+
+These keys exist in `redis-sessions` only during an active session and are deleted after session cleanup.
+
+| Key Pattern | Type | Remarks |
+|---|---|---|
+| `session:{id}:meta` | String (JSON) | Session metadata (user IDs, questionId, topic, difficulty, startedAt). TTL: 2h |
+| `session:{id}:ydoc` | List (base64 strings) | Yjs document update history for replay on reconnect |
+| `session:{id}:finalCode` | String | Plaintext code snapshot, updated on every edit |
+| `session:{id}:chat` | List (JSON strings) | Chat messages. Trimmed to last 500 |
+| `ticket:{uuid}` | String (JSON) | One-time WebSocket ticket (uid + sessionId). TTL: 60s |
+| `lock:match:{uid_A}:{uid_B}` | String | Leader election lock for session creation. TTL: 2h |
 
 ---
 
 ## Change Log (Optional)
 
 - 2026-02-23: Initial schema drafted from D1 planning screenshots.
+- 2026-03-20: Added M4 Session History (Firestore) and Session State (Redis) schemas.

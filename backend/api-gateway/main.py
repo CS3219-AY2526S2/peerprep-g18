@@ -4,11 +4,18 @@
 # Author review: I validated the proxy logic, tested header injection, and configured the routing table.
 
 import os
+import asyncio
+import json
+import uuid
+import time
+from urllib.parse import urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import firebase_admin
 from firebase_admin import credentials, auth
+from redis.asyncio import Redis as AsyncRedis
 
 cred = credentials.Certificate("firebase-service-account.json")
 firebase_admin.initialize_app(cred)
@@ -17,10 +24,26 @@ app = FastAPI(title="PeerPrep API Gateway")
 
 http_client = httpx.AsyncClient()
 
+redis_sessions: AsyncRedis = None
+redis_events: AsyncRedis = None
+
+@app.on_event("startup")
+async def startup():
+    global redis_sessions, redis_events
+    redis_sessions = AsyncRedis(
+        host=os.getenv("REDIS_SESSIONS_HOST", "redis-sessions"), port=6379, decode_responses=True
+    )
+    redis_events = AsyncRedis(
+        host=os.getenv("REDIS_EVENT_BUS_HOST", "redis-event-bus"), port=6379, decode_responses=True
+    )
+
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Clean up the httpx client when the application shuts down."""
     await http_client.aclose()
+    if redis_sessions:
+        await redis_sessions.aclose()
+    if redis_events:
+        await redis_events.aclose()
 
 # app.add_middleware(
 #     CORSMiddleware,
@@ -40,7 +63,7 @@ SERVICES = {
     "admin": "http://user-service:6767",
     "question": "http://question-service:6768",
     # "matching": "http://matching-service:6769",
-    "collab": "http://collab-service:4000",
+    # collab routes are handled directly below — not proxied
 }
 
 # Routes that DO NOT require authentication (e.g., login, registration)
@@ -62,6 +85,152 @@ async def verify_token(request: Request):
     except Exception as e:
         print(f"❌ FIREBASE ERROR: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Auth Failed: {str(e)}")
+
+# ==========================================
+# SESSION CREATION HELPER
+# ==========================================
+async def create_or_join_session(match_data: dict, uid: str) -> dict:
+    uid_A, uid_B = match_data["user1_id"], match_data["user2_id"]
+    lock_key = f"lock:match:{':'.join(sorted([uid_A, uid_B]))}"
+    session_id = str(uuid.uuid4())
+
+    is_leader = await redis_sessions.setnx(lock_key, session_id)
+    await redis_sessions.expire(lock_key, 7200)  # 2-hour session TTL
+
+    if is_leader:
+        # Internal call to question service (no auth headers needed)
+        r = await http_client.get(
+            "http://question-service:6768/question/",
+            params={"topic": match_data["topic"], "difficulty": match_data["difficulty"]}
+        )
+        question_id = r.json()["question_id"]
+        meta = {
+            "user1_id": uid_A, "user2_id": uid_B,
+            "questionId": question_id,
+            "topic": match_data["topic"], "difficulty": match_data["difficulty"],
+            "startedAt": time.time()
+        }
+        await redis_sessions.set(f"session:{session_id}:meta", json.dumps(meta), ex=7200)
+        return {"sessionId": session_id, "questionId": question_id}
+    else:
+        winning_id = await redis_sessions.get(lock_key)
+        for _ in range(10):
+            raw = await redis_sessions.get(f"session:{winning_id}:meta")
+            if raw:
+                meta = json.loads(raw)
+                return {"sessionId": winning_id, "questionId": meta["questionId"]}
+            await asyncio.sleep(0.1)
+        raise HTTPException(503, "Session init timeout")
+
+# ==========================================
+# COLLAB ENDPOINTS (declared before catch-all)
+# ==========================================
+
+@app.get("/matching/events")
+async def match_events(request: Request):
+    decoded = await verify_token(request)
+    uid = decoded["uid"]
+
+    async def stream():
+        pubsub = redis_events.pubsub()
+        await pubsub.subscribe(f"match_events:{uid}")
+        try:
+            yield 'data: {"event": "connected"}\n\n'
+            async for msg in pubsub.listen():
+                if msg["type"] != "message":
+                    continue
+                try:
+                    data = json.loads(msg["data"])
+                except Exception:
+                    continue
+                if data["event"] == "match":
+                    result = await create_or_join_session(data, uid)
+                    yield f"data: {json.dumps({'event': 'match_found', **result})}\n\n"
+                elif data["event"] == "timeout":
+                    yield f"data: {json.dumps({'event': 'timeout'})}\n\n"
+                    break
+        finally:
+            await pubsub.unsubscribe(f"match_events:{uid}")
+            await pubsub.aclose()
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+@app.get("/collab/session/{session_id}")
+async def get_session(session_id: str, request: Request):
+    decoded = await verify_token(request)
+    uid = decoded["uid"]
+    raw = await redis_sessions.get(f"session:{session_id}:meta")
+    if not raw:
+        raise HTTPException(404, "Session not found")
+    meta = json.loads(raw)
+    if uid not in [meta["user1_id"], meta["user2_id"]]:
+        raise HTTPException(403, "Not a member of this session")
+    return {**meta, "sessionId": session_id}
+
+@app.post("/collab/join")
+async def collab_join(request: Request):
+    decoded = await verify_token(request)
+    uid = decoded["uid"]
+    body = await request.json()
+    session_id = body.get("sessionId")
+    if not session_id:
+        raise HTTPException(400, "sessionId required")
+
+    raw = await redis_sessions.get(f"session:{session_id}:meta")
+    if not raw:
+        raise HTTPException(404, "Session not found")
+    meta = json.loads(raw)
+    if uid not in [meta["user1_id"], meta["user2_id"]]:
+        raise HTTPException(403, "Not a member of this session")
+
+    ticket = str(uuid.uuid4())
+    await redis_sessions.set(
+        f"ticket:{ticket}",
+        json.dumps({"uid": uid, "sessionId": session_id}),
+        ex=60  # 60-second one-time use
+    )
+    return {"ticket": ticket}
+
+@app.get("/internal/validate")
+async def internal_validate(request: Request):
+    ticket = request.query_params.get("ticket")
+    if not ticket:
+        return Response(status_code=401)
+
+    val = await redis_sessions.getdel(f"ticket:{ticket}")
+    if not val:
+        return Response(status_code=401)
+
+    data = json.loads(val)
+    return Response(status_code=200, headers={
+        "X-User-Id": data["uid"],
+        "X-Session-Id": data["sessionId"]
+    })
+
+@app.post("/internal/collab/session-ended/{session_id}")
+async def session_ended(session_id: str):
+    raw = await redis_sessions.get(f"session:{session_id}:meta")
+    if not raw:
+        return {"detail": "Already cleaned up"}
+    meta = json.loads(raw)
+    final_code = await redis_sessions.get(f"session:{session_id}:finalCode") or ""
+
+    history_payload = {
+        **meta,
+        "sessionId": session_id,
+        "finalCode": final_code,
+        "endedAt": time.time()
+    }
+    await http_client.post("http://history-service:6770/history", json=history_payload)
+
+    await redis_sessions.delete(
+        f"session:{session_id}:meta",
+        f"session:{session_id}:finalCode",
+        f"session:{session_id}:ydoc",
+        f"session:{session_id}:chat"
+    )
+    return {"detail": "Session ended and history saved"}
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def gateway_proxy(request: Request, path: str):

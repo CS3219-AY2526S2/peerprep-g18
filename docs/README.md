@@ -8,15 +8,26 @@ This `docs/` folder contains living documentation for our PeerPrep project (CS32
 ## Contents
 
 - [`BACKLOG.md`](BACKLOG.md)
-  Markdown-friendly product backlog that supports completion tracking via checkboxes and simple assignment metadata (Owner/Due/Done).  
+  Markdown-friendly product backlog that supports completion tracking via checkboxes and simple assignment metadata (Owner/Due/Done).
   This aligns with the milestone requirement to develop requirements in the form of a product backlog.
+
+- [`API.md`](API.md)
+  RESTful and WebSocket API documentation for all microservices: User Service, Question Service, Matching Service, Collaboration Service, and History Service.
 
 - [`UML.md`](UML.md)
   Central place to track and maintain our UML diagrams (component/sequence diagrams), including allocated space for our current surface-level sequence diagrams (Question History integration + overall user workflow).
 
 - [`SCHEMA.md`](SCHEMA.md)
-  Planned database table schemas for selected microservices / features (e.g., User Service, Question Management, Question History).  
+  Planned database table schemas for selected microservices / features (e.g., User Service, Question Management, Session History).
   Note: schemas may evolve as we finalize service boundaries and persistence decisions.
+
+- [`plantUML/`](plantUML/)
+  PlantUML source files for sequence diagrams:
+  - `collab.puml` — Ticket acquisition and WebSocket connection flow
+  - `matchToCollab.puml` — End-to-end flow from matching to collaboration
+  - `collabToHistory.puml` — Session end, history save, and Redis cleanup flow
+  - `question-service-sequence.puml` — Question service interactions
+  - `user-service-sequence.puml` — User service interactions
 
 ---
 

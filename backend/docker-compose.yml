@@ -25,9 +25,11 @@ services:
     depends_on:
       - user-service
       - redis-event-bus # Listen for match events
+      - redis-sessions  # Session + ticket storage
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_EVENT_BUS_HOST=redis-event-bus
+      - REDIS_SESSIONS_HOST=redis-sessions
 
   # ==========
   # The (Internal) Services
@@ -52,6 +54,10 @@ services:
     volumes:
       - ./collaboration-service:/app
       - /app/node_modules
+    depends_on:
+      - redis-sessions
+    environment:
+      - REDIS_SESSIONS_HOST=redis-sessions
 
   question-service:
     build: ./question-service
@@ -60,6 +66,16 @@ services:
       - "6768"
     volumes:
       - ./question-service:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  history-service:
+    build: ./history-service
+    container_name: history-service
+    expose:
+      - "6770"
+    volumes:
+      - ./history-service:/app
     environment:
       - PYTHONUNBUFFERED=1
 
@@ -88,5 +104,12 @@ services:
   redis-event-bus:
     image: redis:7-alpine
     container_name: redis-event-bus
+    expose:
+      - "6379"
+
+  # Session + ticket storage for collaboration service
+  redis-sessions:
+    image: redis:7-alpine
+    container_name: redis-sessions
     expose:
       - "6379"

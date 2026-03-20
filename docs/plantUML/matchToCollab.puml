@@ -13,8 +13,7 @@ box "API Gateway (Orchestrator)" #LightYellow
 end box
 participant "Matching Service" as MS
 participant "Question Service" as QS
-participant "Editor Service" as ES
-participant "Chat Service" as CS
+participant "Collab Service\n(Socket.IO)" as Collab
 database "Redis (Pub/Sub & State)" as RD
 
 == Phase 1: Generic Matching ==
@@ -59,23 +58,41 @@ group Follower Logic (GWB)
     GWB -->> UB: [Notify] Match Found! {sessionId: sessionId_A}
 end
 
-== Phase 3: Specialized Collaborative Sessions ==
+== Phase 3: Ticket Acquisition & WebSocket Connection ==
 
-UA -> NX: WS Connect /socket.io/editor?sessionId=sessionId_A
-NX -> GWA: Forward Upgrade
-GWA -> ES: Proxy WS Upgrade (Headers: X-User-Id: uid_A)
+UA -> NX: POST /api/collab/join (JWT, sessionId_A)
+NX -> GWA: Forward (strip /api)
+GWA -> GWA: Verify JWT, check session membership
+GWA -> RD: SET ticket:UUID {uid_A, sessionId_A} EX 60
+GWA --> UA: { ticket: "UUID_1" }
 
-UA -> NX: WS Connect /socket.io/chat?sessionId=sessionId_A
-NX -> GWA: Forward Upgrade
-GWA -> CS: Proxy WS Upgrade (Headers: X-User-Id: uid_A)
+UA -> NX: WS /socket.io/?ticket=UUID_1
+NX -> Collab: Proxy Upgrade (plain passthrough)
+Collab -> RD: GETDEL ticket:UUID_1
+RD --> Collab: {uid_A, sessionId_A}
+Collab -> Collab: Attach userId & sessionId to socket
+Collab --> UA: HTTP 101 (WebSocket established)
 
-== Phase 4: Independent Real-time Sync ==
+note over NX, Collab
+  Ticket validation happens in the collab service
+  Socket.IO middleware, not via nginx auth_request.
+  One ticket per connection (editor + chat = 2 tickets).
+end note
 
-UA -> ES: WS Message: code_change (Delta)
-ES -> RD: Update session:sessionId_A:editor
-ES -> UB: Broadcast code_update
+== Phase 4: Real-time Collaboration ==
 
-UA -> CS: WS Message: send_message ("Hello!")
-CS -> RD: LPUSH session:sessionId_A:chat_history
-CS -> UB: Broadcast receive_message
+UA -> Collab: /editor — yjs-update (Yjs binary delta)
+Collab -> RD: RPUSH session:sessionId_A:ydoc (base64)
+Collab -> RD: SET session:sessionId_A:finalCode (plaintext)
+Collab -> UB: Broadcast yjs-update
+
+UA -> Collab: /chat — send-message ("Hello!")
+Collab -> RD: RPUSH session:sessionId_A:chat (JSON, trim to 500)
+Collab -> UB: Broadcast receive-message
+
+note over Collab
+  /editor and /chat are separate Socket.IO namespaces.
+  Each requires its own ticket for connection.
+  Yjs updates use CRDT for conflict-free merging.
+end note
 @enduml

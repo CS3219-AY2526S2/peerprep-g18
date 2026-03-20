@@ -1,0 +1,54 @@
+@startuml
+skinparam style strictuml
+skinparam sequenceMessageAlign center
+
+actor "User (Browser)" as User
+participant "Frontend" as FE
+box "Infrastructure" #f9f9f9
+    participant "Nginx" as Nginx
+    participant "API Gateway" as Auth
+    database "Redis\n(Sessions)" as Redis
+end box
+participant "Collab Service\n(Socket.io)" as Collab
+
+== Phase 1: Ticket Acquisition ==
+
+User -> FE: Wants to join session
+FE -> Nginx: POST /api/collab/join\nAuth: [Firebase Token]
+Nginx -> Auth: Forward (strip /api)
+activate Auth
+Auth -> Auth: Validate Firebase Token\nCheck session membership
+Auth -> Redis: SET ticket:UUID\n{uid, sessionId} EX 60
+Auth --> FE: 200 OK { ticket: "UUID" }
+deactivate Auth
+
+== Phase 2: WebSocket Connection ==
+
+FE -> Nginx: WS Upgrade Request\n/socket.io/?ticket=UUID
+activate Nginx
+Nginx -> Collab: Proxy Upgrade\n(plain passthrough, no auth_request)
+activate Collab
+
+Collab -> Collab: Socket.IO middleware:\nextract ticket from query
+
+Collab -> Redis: GETDEL ticket:UUID
+Redis --> Collab: {uid, sessionId} or null
+
+alt Ticket Valid
+    Collab -> Collab: Attach userId & sessionId\nto socket object
+    Collab --> FE: HTTP 101 Switching Protocols
+    FE <-> Collab: Authenticated WebSocket
+else Ticket Invalid/Expired/Missing
+    Collab --> FE: Connection rejected\n(Socket.IO error event)
+end
+
+deactivate Collab
+deactivate Nginx
+
+note over Collab, Redis
+  Design note: Ticket validation is done in the
+  collab service middleware, not via nginx auth_request.
+  nginx auth_request interferes with WebSocket upgrades.
+end note
+
+@enduml
