@@ -3,7 +3,7 @@
 **Owner:** Lee De En (M4 Collaboration)
 **Scope:** `collaboration-service/`, `api-gateway/`, `nginx.conf`, `docker-compose.yml`, `history-service/` (new), `docs/API.md`
 **Does NOT touch:** user-service, matching-service, question-service internals
-**Status:** All phases complete (2026-03-20)
+**Status:** All phases complete (2026-03-21)
 
 Each phase below is a self-contained, deployable, testable unit.
 
@@ -17,7 +17,7 @@ Frontend          Nginx            API Gateway         Collab Service   History 
    |--GET /matching/events (SSE)------->|                    |                |
    |                |     subscribe match_events:{uid} on Redis               |
    |                |     SETNX leader election + question fetch              |
-   |<--SSE: {match_found, sessionId, questionId}             |                |
+   |<--SSE: event:match_found {sessionId, questionId}        |                |
    |                |                   |                    |                |
    |--POST /api/collab/join (JWT)------->|                   |                |
    |<--{ ticket: UUID }                 |                    |                |
@@ -28,11 +28,21 @@ Frontend          Nginx            API Gateway         Collab Service   History 
    |                |                   |    attach uid+sessionId to socket   |
    |<===================== Yjs editor + chat over Socket.IO ================>|
    |                |                   |                    |                |
-   |      [both disconnect → 30s timer]                      |                |
-   |                |                   |    POST /internal/collab/session-ended
+   |  [User A ends or disconnects 30s]  |                    |                |
+   |                |                   |    snapshot code    |                |
+   |                |                   |    POST /internal/collab/user-ended |
    |                |                   |<-------------------|                |
-   |                |                   |   reads finalCode from Redis        |
-   |                |                   |   POST /history ---------------------->|
+   |                |                   |   save User A's history ------------>|
+   |                |                   |   SET saved:{uid_A} flag            |
+   |                |                   |                    |                |
+   |                |                   |    emit 'partner-ended' to User B   |
+   |  [User B prompted: Continue/End]   |                    |                |
+   |  [User B continues solo editing]   |                    |                |
+   |  [User B ends → same flow]         |                    |                |
+   |                |                   |                    |                |
+   |  [all disconnected → cleanup]      |    POST /internal/collab/session-ended
+   |                |                   |<-------------------|                |
+   |                |                   |   save history for unsaved users -->|
    |                |                   |   DEL all session:{id}:* keys       |
 ```
 
@@ -88,12 +98,12 @@ environment:
 - Leader election via `SETNX` on `lock:match:{sorted_uids}`
 - Leader calls question service internally (`GET http://question-service:6768/question/`)
 - Stores session meta in Redis with 2h TTL
-- Follower polls for session meta (up to 10 retries, 100ms apart)
+- Follower polls for session meta (up to 50 retries, 200ms apart — 10s window)
 
 **1c. SSE endpoint** — `GET /matching/events`:
 - Declared BEFORE catch-all proxy route
 - Subscribes to `match_events:{uid}` on redis-event-bus
-- Streams `match_found` / `timeout` events
+- Streams `match_found` / `timeout` events using proper SSE `event:` field (not embedded in JSON `data`)
 - Includes JSON error handling (Git Bash on Windows injects control characters)
 
 **1d. Session meta endpoint** — `GET /collab/session/{session_id}`:
@@ -230,8 +240,9 @@ collab-service:
 const sessions = new Map()
 // sessions.get(sessionId) = {
 //   ydoc: Y.Doc,
-//   connectedEditors: Set<string>,   // userIds
-//   disconnectTimer: Timeout | null
+//   connectedEditors: Set<string>,       // userIds
+//   userDisconnectTimers: Map<string, Timeout>,  // per-user 30s disconnect timers
+//   disconnectTimer: Timeout | null       // full session cleanup timer
 // }
 ```
 
@@ -244,9 +255,10 @@ chatNs.use(ticketMiddleware)
 ```
 
 **`/editor` namespace:**
-- On `connection`: reads `socket.userId` and `socket.sessionId` (set by Phase 2 middleware), creates or loads Y.Doc from Redis, joins room, sends `yjs-sync` (full state), emits `user-joined` to partner
+- On `connection`: reads `socket.userId` and `socket.sessionId` (set by Phase 2 middleware), creates or loads Y.Doc from Redis, joins room, sends `yjs-sync` (full state), emits `user-joined` to partner AND notifies new joiner about existing users already in the room
 - On `yjs-update`: applies update to Y.Doc, persists as base64 to Redis (`RPUSH session:{id}:ydoc`), stores plaintext snapshot (`SET session:{id}:finalCode`), broadcasts to partner
-- On `disconnect`: removes from `connectedEditors`, emits `user-left`, starts 30s cleanup timer if both users gone
+- On `end-session`: snapshots code, calls `POST /internal/collab/user-ended/{sessionId}` to save this user's history, emits `partner-ended` to remaining users
+- On `disconnect`: removes from `connectedEditors`, emits `user-left`, starts 30s per-user timer. If timer expires without reconnect, treats as end-session (snapshot + save + `partner-ended`). If all users gone after per-user timers fire, starts session cleanup timer
 - Cleanup timer fires: `POST http://api-gateway:1234/internal/collab/session-ended/{sessionId}`, deletes in-memory session
 
 **`/chat` namespace:**
@@ -269,7 +281,7 @@ chatNs.use(ticketMiddleware)
 ## Phase 4 — Session History + Cleanup
 **Status: COMPLETE**
 
-**Deliverable:** When both users disconnect and the 30-second grace period expires, the session's final code and metadata are saved to Firestore, then all Redis keys are deleted.
+**Deliverable:** Each user gets their own history entry with a code snapshot from when they left. When all users are gone and grace periods expire, remaining unsaved users' history is written and Redis keys are cleaned up.
 
 ### New service created: `backend/history-service/`
 
@@ -279,11 +291,14 @@ chatNs.use(ticketMiddleware)
 - `backend/history-service/main.py` — two endpoints
 - `backend/history-service/firebase-history-account.json` — Firebase service account (gitignored)
 
-**`POST /history`** — saves session record to Firestore `session_history` collection:
+**`POST /history`** — saves per-user session record to Firestore `session_history` collection:
 ```python
 @app.post("/history", status_code=201)
 async def save_history(payload: dict):
-    db.collection("session_history").document(payload["sessionId"]).set(payload)
+    session_id = payload["sessionId"]
+    submitted_by = payload.get("submittedBy", "")
+    doc_id = f"{session_id}_{submitted_by}" if submitted_by else session_id
+    db.collection("session_history").document(doc_id).set(payload)
     return {"detail": "saved"}
 ```
 
@@ -299,36 +314,31 @@ async def get_history(user_id: str):
 
 ### Other files changed
 - `backend/docker-compose.yml` — added `history-service` container (port 6770)
-- `backend/api-gateway/main.py` — added `POST /internal/collab/session-ended/{session_id}`
+- `backend/api-gateway/main.py` — added `POST /internal/collab/user-ended/{session_id}` and `POST /internal/collab/session-ended/{session_id}`
 
-**API Gateway cleanup endpoint** — called by collab service's 30s disconnect timer:
+**API Gateway per-user history endpoint** — called by collab service when a user ends or disconnects (30s timeout):
+```python
+@app.post("/internal/collab/user-ended/{session_id}")
+async def user_ended(session_id: str, request: Request):
+    body = await request.json()
+    user_id = body["userId"]
+    final_code = body.get("finalCode", "")
+    # ... reads session meta, saves to history with submittedBy field
+    # Sets session:{id}:saved:{uid} flag to prevent duplicate save on cleanup
+```
+
+**API Gateway cleanup endpoint** — called by collab service when all users are gone:
 ```python
 @app.post("/internal/collab/session-ended/{session_id}")
 async def session_ended(session_id: str):
-    raw = await redis_sessions.get(f"session:{session_id}:meta")
-    if not raw:
-        return {"detail": "Already cleaned up"}
-    meta = json.loads(raw)
-    final_code = await redis_sessions.get(f"session:{session_id}:finalCode") or ""
-
-    history_payload = {
-        **meta,
-        "sessionId": session_id,
-        "finalCode": final_code,
-        "endedAt": time.time()
-    }
-    await http_client.post("http://history-service:6770/history", json=history_payload)
-
-    await redis_sessions.delete(
-        f"session:{session_id}:meta",
-        f"session:{session_id}:finalCode",
-        f"session:{session_id}:ydoc",
-        f"session:{session_id}:chat"
-    )
-    return {"detail": "Session ended and history saved"}
+    # ... reads session meta
+    # For each user, checks session:{id}:saved:{uid} flag
+    # Only saves history for users who haven't been saved yet
+    # Deletes all session:{id}:* keys including saved flags
 ```
 
 ### Firestore record format
+Document ID: `{sessionId}_{submittedBy}` (each user gets their own entry)
 ```json
 {
   "sessionId": "uuid",
@@ -339,7 +349,8 @@ async def session_ended(session_id: str):
   "difficulty": "Easy",
   "finalCode": "function hello() { return 'world' }",
   "startedAt": 1774017000.0,
-  "endedAt": 1774020600.0
+  "endedAt": 1774020600.0,
+  "submittedBy": "uid_A"
 }
 ```
 
@@ -369,6 +380,56 @@ async def session_ended(session_id: str):
 
 ---
 
+## Phase 6 — Graceful Session End + Per-User History
+**Status: COMPLETE**
+
+**Deliverable:** When a user ends a session (or disconnects for 30s), their code is snapshotted and saved individually. The partner is prompted to continue or end. Each user gets their own history entry.
+
+### Files changed
+- `backend/collaboration-service/server.js` — end-session handler, per-user disconnect timers, user-joined for existing users
+- `backend/api-gateway/main.py` — SSE `event:` field fix, follower polling timeout (1s→10s), new `POST /internal/collab/user-ended/{session_id}`, updated `session-ended` to skip already-saved users
+- `backend/history-service/main.py` — per-user document IDs (`{sessionId}_{submittedBy}`)
+- `frontend/src/components/CollaborationPage.tsx` — `partner-ended` modal (Continue/End), `end-session` emit, partner status fixes
+- `frontend/src/components/MatchingPage.tsx` — SSE event type handling fix
+
+### What was done
+
+**6a. SSE format fix** — SSE events now use proper `event:` field (`event: match_found\ndata: {...}`) instead of embedding event type in JSON data. Frontend `fetchEventSource` reads `event.event` for routing.
+
+**6b. Session creation reliability** — Follower polling timeout increased from 1s (10×0.1s) to 10s (50×0.2s). Added try/except around `create_or_join_session` in SSE generator to prevent `RuntimeError: response already started`.
+
+**6c. Explicit end-session flow** — When a user clicks "End Session":
+1. Frontend emits `end-session` to collab service
+2. Collab service snapshots `ydoc.getText('code')`, calls `POST /internal/collab/user-ended/{sessionId}` with the snapshot
+3. API gateway saves the user's history entry (Firestore doc: `{sessionId}_{userId}`) and sets a `session:{id}:saved:{uid}` Redis flag
+4. Collab service emits `partner-ended` to the room
+
+**6d. Disconnect-as-end-session** — When a user disconnects without clicking End:
+1. `user-left` emitted immediately (partner sees "Reconnecting...")
+2. 30-second per-user timer starts (`userDisconnectTimers` map)
+3. If user reconnects within 30s → timer cancelled, `user-joined` emitted, back to normal
+4. If timer expires → same flow as explicit end-session (snapshot + save + `partner-ended`)
+
+**6e. Partner prompt modal** — When `partner-ended` is received:
+- Modal displayed: "Your partner ended the session. Continue or End?"
+- **Continue:** modal dismissed, editor + chat remain functional, partner status shows "Partner has left"
+- **End:** `end-session` emitted (saves this user's history), sockets disconnected, navigate to dashboard
+
+**6f. Per-user history** — History service now uses `{sessionId}_{submittedBy}` as Firestore document ID. Session cleanup (`session-ended`) checks `session:{id}:saved:{uid}` flags and only saves history for users not already saved.
+
+**6g. User-joined for existing users** — On editor connect, the new joiner receives `user-joined` events for users already in the session (previously only existing users were notified about new joiners).
+
+### Key decisions
+| Decision | Reason |
+|---|---|
+| Per-user 30s disconnect timer (not one global timer) | Each user should be treated independently — User A disconnecting shouldn't force User B out |
+| `partner-ended` vs `session-ended` event | `partner-ended` prompts user to choose; `session-ended` was auto-redirecting without choice |
+| SSE `event:` field | `@microsoft/fetch-event-source` exposes SSE event type via `event.event`, not from JSON body |
+| Follower 10s polling (was 1s) | Question service call takes 2-3s; 1s window caused Session init timeout for the follower |
+| Redis `saved:{uid}` flag | Prevents duplicate history writes when cleanup runs after user already saved via end-session |
+
+---
+
 ## Summary Table
 
 | Phase | What shipped | Status |
@@ -379,6 +440,7 @@ async def session_ended(session_id: str):
 | 3 | Yjs collab editor + chat + Redis persistence | COMPLETE |
 | 4 | History service + session cleanup | COMPLETE |
 | 5 | API documentation in `docs/API.md` | COMPLETE |
+| 6 | Graceful session end + per-user history | COMPLETE |
 
 ## Key Context
 

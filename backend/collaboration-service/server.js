@@ -74,6 +74,7 @@ async function getOrCreateSession(sessionId) {
   const session = {
     ydoc,
     connectedEditors: new Set(),
+    userDisconnectTimers: new Map(),  // userId -> timeout (30s per-user disconnect)
     disconnectTimer: null
   };
   sessions.set(sessionId, session);
@@ -91,7 +92,11 @@ editorNs.on('connection', async (socket) => {
 
   const session = await getOrCreateSession(sessionId);
 
-  // Clear disconnect timer if partner reconnects
+  // Clear any disconnect timers for this user (they reconnected in time)
+  if (session.userDisconnectTimers.has(userId)) {
+    clearTimeout(session.userDisconnectTimers.get(userId));
+    session.userDisconnectTimers.delete(userId);
+  }
   if (session.disconnectTimer) {
     clearTimeout(session.disconnectTimer);
     session.disconnectTimer = null;
@@ -104,8 +109,15 @@ editorNs.on('connection', async (socket) => {
   const state = Y.encodeStateAsUpdate(session.ydoc);
   socket.emit('yjs-sync', Buffer.from(state));
 
-  // Notify partner
+  // Notify existing users about the new joiner
   socket.to(sessionId).emit('user-joined', { userId });
+
+  // Notify the new joiner about users already in the session
+  for (const existingUserId of session.connectedEditors) {
+    if (existingUserId !== userId) {
+      socket.emit('user-joined', { userId: existingUserId });
+    }
+  }
 
   // Handle Yjs updates from this client
   socket.on('yjs-update', async (data) => {
@@ -128,29 +140,72 @@ editorNs.on('connection', async (socket) => {
     socket.to(sessionId).emit('yjs-update', data);
   });
 
+  socket.on('end-session', async () => {
+    console.log(`[editor] ${userId} ended session ${sessionId}`);
+
+    // Snapshot the code at the moment this user leaves
+    const finalCode = session.ydoc.getText('code').toString();
+
+    // Save this user's history via api-gateway
+    try {
+      await axios.post(
+        `http://api-gateway:1234/internal/collab/user-ended/${sessionId}`,
+        { userId, finalCode }
+      );
+    } catch (err) {
+      console.error(`[end-session] Failed to save history for ${userId}: ${err.message}`);
+    }
+
+    // Notify remaining users — they get a prompt to continue or leave
+    socket.to(sessionId).emit('partner-ended', { userId });
+  });
+
   socket.on('disconnect', () => {
     console.log(`[editor] ${userId} disconnected (${socket.id})`);
     session.connectedEditors.delete(userId);
 
+    // Notify partner about temporary disconnect
     editorNs.to(sessionId).emit('user-left', {
       userId,
-      message: 'Your partner has left. Editing is disabled.'
+      message: 'Your partner has disconnected.'
     });
 
-    // If both users disconnected, start 30s cleanup timer
-    if (session.connectedEditors.size === 0) {
-      session.disconnectTimer = setTimeout(async () => {
-        try {
-          await axios.post(
-            `http://api-gateway:1234/internal/collab/session-ended/${sessionId}`
-          );
-        } catch (err) {
-          console.error(`[cleanup] Failed to notify session end: ${err.message}`);
-        }
-        sessions.delete(sessionId);
-        console.log(`[cleanup] Session ${sessionId} cleaned up`);
-      }, 30000);
-    }
+    // Start 30s timer for this user — if they don't reconnect, treat as end-session
+    const userTimer = setTimeout(async () => {
+      session.userDisconnectTimers.delete(userId);
+      console.log(`[disconnect-timeout] ${userId} did not reconnect, treating as end-session`);
+
+      // Snapshot and save this user's history
+      const finalCode = session.ydoc.getText('code').toString();
+      try {
+        await axios.post(
+          `http://api-gateway:1234/internal/collab/user-ended/${sessionId}`,
+          { userId, finalCode }
+        );
+      } catch (err) {
+        console.error(`[disconnect-timeout] Failed to save history for ${userId}: ${err.message}`);
+      }
+
+      // Notify remaining users with the same prompt as end-session
+      editorNs.to(sessionId).emit('partner-ended', { userId });
+
+      // If no one is left, start full session cleanup
+      if (session.connectedEditors.size === 0) {
+        session.disconnectTimer = setTimeout(async () => {
+          try {
+            await axios.post(
+              `http://api-gateway:1234/internal/collab/session-ended/${sessionId}`
+            );
+          } catch (err) {
+            console.error(`[cleanup] Failed to notify session end: ${err.message}`);
+          }
+          sessions.delete(sessionId);
+          console.log(`[cleanup] Session ${sessionId} cleaned up`);
+        }, 5000);
+      }
+    }, 30000);
+
+    session.userDisconnectTimers.set(userId, userTimer);
   });
 });
 

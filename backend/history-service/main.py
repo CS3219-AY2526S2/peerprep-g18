@@ -10,7 +10,10 @@ app = FastAPI(title="PeerPrep History Service")
 
 @app.post("/history", status_code=201)
 async def save_history(payload: dict):
-    db.collection("session_history").document(payload["sessionId"]).set(payload)
+    session_id = payload["sessionId"]
+    submitted_by = payload.get("submittedBy", "")
+    doc_id = f"{session_id}_{submitted_by}" if submitted_by else session_id
+    db.collection("session_history").document(doc_id).set(payload)
     return {"detail": "saved"}
 
 @app.get("/history/{user_id}")

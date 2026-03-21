@@ -1,58 +1,126 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, X, Users } from 'lucide-react';
+import { fetchEventSource } from '@microsoft/fetch-event-source';
+import { toast } from 'sonner';
+import { GATEWAY_URL } from '../constants';
+import { auth } from '../firebase';
 
-interface MatchingPageProps {
-  criteria: any;
-  onMatchFound: (session: any) => void;
-  onTimeout: () => void;
-  onCancel: () => void;
-}
+export function MatchingPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const criteria = location.state as { difficulties: string[]; topics: string[] } | null;
 
-export function MatchingPage({ criteria, onMatchFound, onTimeout, onCancel }: MatchingPageProps) {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [dots, setDots] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
+  const matchedRef = useRef(false);
 
   useEffect(() => {
-    // Simulate matching process
-    const matchTimer = setTimeout(() => {
-      // Simulate successful match after 3-5 seconds
-      const mockPartner = {
-        username: ['alexchen', 'sarahj', 'mikebrown', 'emmawilson'][Math.floor(Math.random() * 4)],
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`
-      };
+    if (!criteria) {
+      navigate('/dashboard', { replace: true });
+      return;
+    }
 
-      // Pick a random difficulty and topic from the selected ones
-      const randomDifficulty = criteria.difficulties[Math.floor(Math.random() * criteria.difficulties.length)];
-      const randomTopic = criteria.topics[Math.floor(Math.random() * criteria.topics.length)];
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
-      onMatchFound({
-        id: 'test-session-123',
-        partner: mockPartner,
-        question: {
-          title: `${randomDifficulty.charAt(0).toUpperCase() + randomDifficulty.slice(1)} ${randomTopic} Problem`,
-          description: `Solve a challenging ${randomTopic.toLowerCase()} problem that tests your understanding of core concepts.`,
-          difficulty: randomDifficulty,
-          topic: randomTopic
+    const startMatching = async () => {
+      try {
+        const firebaseUser = auth.currentUser;
+        if (!firebaseUser) {
+          navigate('/auth', { replace: true });
+          return;
         }
-      });
-    }, 3000 + Math.random() * 2000);
+        const token = await firebaseUser.getIdToken();
 
-    // Timeout after 60 seconds (updated from 30)
-    const timeoutTimer = setTimeout(() => {
-      onTimeout();
-    }, 60000);
+        // Open SSE stream first
+        fetchEventSource(`${GATEWAY_URL}/matching/events`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+          signal: ctrl.signal,
+          openWhenHidden: true,
+          onopen: async (response) => {
+            if (!response.ok) {
+              throw new Error(`SSE open failed: ${response.status}`);
+            }
+          },
+          onmessage: (event) => {
+            if (matchedRef.current) return;
+
+            if (event.event === 'match_found') {
+              matchedRef.current = true;
+              const data = JSON.parse(event.data);
+              navigate(`/session/${data.sessionId}`, { replace: true });
+            } else if (event.event === 'timeout') {
+              matchedRef.current = true;
+              toast.info('No match found. Try again!');
+              navigate('/dashboard', { replace: true });
+            } else if (event.event === 'connected') {
+              console.log('SSE connected');
+            }
+          },
+          onerror: (err) => {
+            if (ctrl.signal.aborted) return;
+            console.error('SSE error:', err);
+            toast.error('Connection lost. Retrying...');
+          }
+        });
+
+        // Then call find-pair
+        const res = await fetch(`${GATEWAY_URL}/matching/find-pair`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            topic_options: criteria.topics,
+            difficulty_options: criteria.difficulties
+          }),
+          signal: ctrl.signal
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Matching failed: ${res.status}`);
+        }
+      } catch (err: any) {
+        if (ctrl.signal.aborted) return;
+        console.error('Matching error:', err);
+        toast.error(err.message || 'Failed to start matching');
+        navigate('/dashboard', { replace: true });
+      }
+    };
+
+    startMatching();
 
     return () => {
-      clearTimeout(matchTimer);
-      clearTimeout(timeoutTimer);
+      ctrl.abort();
     };
-  }, [criteria, onMatchFound, onTimeout]);
+  }, [criteria, navigate]);
+
+  // Cancel handler
+  const handleCancel = async () => {
+    try {
+      abortRef.current?.abort();
+      const firebaseUser = auth.currentUser;
+      if (firebaseUser) {
+        const token = await firebaseUser.getIdToken();
+        await fetch(`${GATEWAY_URL}/matching/cancel-pair`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+      }
+    } catch {
+      // ignore cancel errors
+    }
+    navigate('/dashboard', { replace: true });
+  };
 
   useEffect(() => {
     const timer = setInterval(() => {
       setElapsedTime((prev) => prev + 1);
     }, 1000);
-
     return () => clearInterval(timer);
   }, []);
 
@@ -60,16 +128,17 @@ export function MatchingPage({ criteria, onMatchFound, onTimeout, onCancel }: Ma
     const dotsTimer = setInterval(() => {
       setDots((prev) => (prev.length >= 3 ? '' : prev + '.'));
     }, 500);
-
     return () => clearInterval(dotsTimer);
   }, []);
+
+  if (!criteria) return null;
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
       <div className="max-w-md w-full">
         <div className="card-purple text-center relative">
           <button
-            onClick={onCancel}
+            onClick={handleCancel}
             className="absolute top-6 right-6 text-gray-400 hover:text-white transition-all"
           >
             <X className="w-6 h-6" />
@@ -117,7 +186,7 @@ export function MatchingPage({ criteria, onMatchFound, onTimeout, onCancel }: Ma
             We're searching for a peer with matching preferences. This usually takes less than 60 seconds.
           </p>
 
-          <button onClick={onCancel} className="btn-secondary w-full">
+          <button onClick={handleCancel} className="btn-secondary w-full">
             Cancel Search
           </button>
         </div>

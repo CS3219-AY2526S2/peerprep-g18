@@ -59,20 +59,23 @@ Collection: `session_history` (History Service — Firestore)
 
 | Field | Type | Remarks |
 |---|---|---|
-| `sessionId` | String (UUID) | Document ID |
+| (Document ID) | String | `{sessionId}_{submittedBy}` — per-user entry |
+| `sessionId` | String (UUID) | Original session ID |
 | `user1_id` | String | Firebase UID of first matched user |
 | `user2_id` | String | Firebase UID of second matched user |
 | `questionId` | String | Foreign Key* (M3) |
 | `topic` | String | e.g., “Strings” |
 | `difficulty` | String | e.g., “Easy” |
-| `finalCode` | String | Final code snapshot at session end |
+| `finalCode` | String | Code snapshot at the time this user left |
 | `startedAt` | Float (Unix timestamp) | Session start time |
-| `endedAt` | Float (Unix timestamp) | Session end time (after 30s grace period) |
+| `endedAt` | Float (Unix timestamp) | Time this user ended/disconnected |
+| `submittedBy` | String | Firebase UID of the user this entry belongs to |
 
 Notes:
 - Stored in Firestore via the History Service (`backend/history-service/`).
-- Records are created automatically when both users disconnect and the 30-second grace period expires.
-- `finalCode` is a plaintext snapshot of the Yjs shared document at the time of session end.
+- Each user gets their own history entry with a code snapshot from when **they** left the session.
+- If User A ends first and User B continues editing, User A's `finalCode` reflects the code at the time they left, while User B's `finalCode` includes their subsequent changes.
+- A user's history is saved when they explicitly click “End Session” or when their 30-second disconnect timeout expires.
 - Queried by `user1_id` or `user2_id` to retrieve a user's session history.
 
 ## M4: Session State (Schema) — Redis (Ephemeral)
@@ -87,6 +90,7 @@ These keys exist in `redis-sessions` only during an active session and are delet
 | `session:{id}:chat` | List (JSON strings) | Chat messages. Trimmed to last 500 |
 | `ticket:{uuid}` | String (JSON) | One-time WebSocket ticket (uid + sessionId). TTL: 60s |
 | `lock:match:{uid_A}:{uid_B}` | String | Leader election lock for session creation. TTL: 2h |
+| `session:{id}:saved:{uid}` | String ("1") | Flag: user's history has been saved (prevents duplicate save on cleanup). TTL: 2h |
 
 ---
 
@@ -94,3 +98,4 @@ These keys exist in `redis-sessions` only during an active session and are delet
 
 - 2026-02-23: Initial schema drafted from D1 planning screenshots.
 - 2026-03-20: Added M4 Session History (Firestore) and Session State (Redis) schemas.
+- 2026-03-21: Updated session_history to per-user entries (`{sessionId}_{submittedBy}`). Added `submittedBy` field and `session:{id}:saved:{uid}` Redis key.

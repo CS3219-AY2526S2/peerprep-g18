@@ -62,7 +62,7 @@ SERVICES = {
     "users": "http://user-service:6767",
     "admin": "http://user-service:6767",
     "question": "http://question-service:6768",
-    # "matching": "http://matching-service:6769",
+    "matching": "http://matching-service:6769",
     # collab routes are handled directly below — not proxied
 }
 
@@ -114,12 +114,12 @@ async def create_or_join_session(match_data: dict, uid: str) -> dict:
         return {"sessionId": session_id, "questionId": question_id}
     else:
         winning_id = await redis_sessions.get(lock_key)
-        for _ in range(10):
+        for _ in range(50):
             raw = await redis_sessions.get(f"session:{winning_id}:meta")
             if raw:
                 meta = json.loads(raw)
                 return {"sessionId": winning_id, "questionId": meta["questionId"]}
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
         raise HTTPException(503, "Session init timeout")
 
 # ==========================================
@@ -135,7 +135,7 @@ async def match_events(request: Request):
         pubsub = redis_events.pubsub()
         await pubsub.subscribe(f"match_events:{uid}")
         try:
-            yield 'data: {"event": "connected"}\n\n'
+            yield 'event: connected\ndata: {}\n\n'
             async for msg in pubsub.listen():
                 if msg["type"] != "message":
                     continue
@@ -144,10 +144,14 @@ async def match_events(request: Request):
                 except Exception:
                     continue
                 if data["event"] == "match":
-                    result = await create_or_join_session(data, uid)
-                    yield f"data: {json.dumps({'event': 'match_found', **result})}\n\n"
+                    try:
+                        result = await create_or_join_session(data, uid)
+                        yield f"event: match_found\ndata: {json.dumps(result)}\n\n"
+                    except Exception as e:
+                        print(f"Session creation error for {uid}: {e}")
+                        yield f"event: error\ndata: {json.dumps({'message': 'Session creation failed'})}\n\n"
                 elif data["event"] == "timeout":
-                    yield f"data: {json.dumps({'event': 'timeout'})}\n\n"
+                    yield 'event: timeout\ndata: {}\n\n'
                     break
         finally:
             await pubsub.unsubscribe(f"match_events:{uid}")
@@ -208,6 +212,31 @@ async def internal_validate(request: Request):
         "X-Session-Id": data["sessionId"]
     })
 
+@app.post("/internal/collab/user-ended/{session_id}")
+async def user_ended(session_id: str, request: Request):
+    body = await request.json()
+    user_id = body["userId"]
+    final_code = body.get("finalCode", "")
+
+    raw = await redis_sessions.get(f"session:{session_id}:meta")
+    if not raw:
+        return {"detail": "Session not found"}
+    meta = json.loads(raw)
+
+    history_payload = {
+        **meta,
+        "sessionId": session_id,
+        "finalCode": final_code,
+        "endedAt": time.time(),
+        "submittedBy": user_id
+    }
+    await http_client.post("http://history-service:6770/history", json=history_payload)
+
+    # Flag this user's history as saved so cleanup doesn't duplicate it
+    await redis_sessions.set(f"session:{session_id}:saved:{user_id}", "1", ex=7200)
+
+    return {"detail": f"History saved for {user_id}"}
+
 @app.post("/internal/collab/session-ended/{session_id}")
 async def session_ended(session_id: str):
     raw = await redis_sessions.get(f"session:{session_id}:meta")
@@ -216,19 +245,27 @@ async def session_ended(session_id: str):
     meta = json.loads(raw)
     final_code = await redis_sessions.get(f"session:{session_id}:finalCode") or ""
 
-    history_payload = {
-        **meta,
-        "sessionId": session_id,
-        "finalCode": final_code,
-        "endedAt": time.time()
-    }
-    await http_client.post("http://history-service:6770/history", json=history_payload)
+    # Save history for any user who hasn't already saved via end-session
+    for uid_key in ["user1_id", "user2_id"]:
+        uid = meta[uid_key]
+        already_saved = await redis_sessions.get(f"session:{session_id}:saved:{uid}")
+        if not already_saved:
+            history_payload = {
+                **meta,
+                "sessionId": session_id,
+                "finalCode": final_code,
+                "endedAt": time.time(),
+                "submittedBy": uid
+            }
+            await http_client.post("http://history-service:6770/history", json=history_payload)
 
     await redis_sessions.delete(
         f"session:{session_id}:meta",
         f"session:{session_id}:finalCode",
         f"session:{session_id}:ydoc",
-        f"session:{session_id}:chat"
+        f"session:{session_id}:chat",
+        f"session:{session_id}:saved:{meta['user1_id']}",
+        f"session:{session_id}:saved:{meta['user2_id']}"
     )
     return {"detail": "Session ended and history saved"}
 

@@ -1,32 +1,29 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Edit2, Check, Loader2, AlertTriangle } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
+import { useUser } from '../contexts/UserContext';
 
-interface ProfilePageProps {
-  user: any;
-  onBack: () => void;
-  onLogout: () => void;
-  onUpdate: (data: any) => void;
-}
-
-export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePageProps) {
+export function ProfilePage() {
+  const navigate = useNavigate();
+  const { user, setUser, handleLogout } = useUser();
   const [isEditing, setIsEditing] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showPasswords, setShowPasswords] = useState(false);
-  
+
   const [profileData, setProfileData] = useState({
     username: user.Username || user.username,
     email: user.Email || user.email
   });
-  
+
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
   });
-  
+
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [errors, setErrors] = useState<any>({});
   const [successMessage, setSuccessMessage] = useState('');
@@ -34,7 +31,7 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
   const handleSaveProfile = async () => {
     setIsLoading(true);
     setErrors({});
-    
+
     try {
       const token = localStorage.getItem('peerprep_token');
       const response = await fetch(`${GATEWAY_URL}/users/${user.UserID || user.uid}`, {
@@ -51,7 +48,7 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
         throw new Error(err.detail || 'Failed to update profile');
       }
 
-      onUpdate({ username: profileData.username });
+      setUser({ ...user, username: profileData.username });
       setIsEditing(false);
       setSuccessMessage('Profile updated successfully!');
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -80,7 +77,7 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           password: passwordData.newPassword,
           confirm_password: passwordData.confirmPassword
         })
@@ -115,18 +112,24 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
       });
 
       if (!response.ok) throw new Error('Failed to delete account');
-      
-      onLogout(); // Log them out immediately
+
+      await handleLogout();
+      navigate('/', { replace: true });
     } catch (err: any) {
       setErrors({ delete: err.message });
       setIsLoading(false);
     }
   };
 
+  const onLogout = async () => {
+    await handleLogout();
+    navigate('/', { replace: true });
+  };
+
   return (
     <div className="min-h-screen p-6 bg-[#2D2942]">
       <div className="max-w-2xl mx-auto">
-        <button onClick={onBack} className="mb-8 flex items-center gap-2 text-gray-300 hover:text-white">
+        <button onClick={() => navigate('/dashboard')} className="mb-8 flex items-center gap-2 text-gray-300 hover:text-white">
           <ArrowLeft className="w-5 h-5" />
           <span>Back to Dashboard</span>
         </button>
@@ -219,7 +222,7 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
             <AlertTriangle className="w-6 h-6 text-red-500" />
             <h3 className="text-white font-bold text-xl">Danger Zone</h3>
           </div>
-          
+
           {!isDeleting ? (
             <div>
               <p className="text-gray-400 mb-6">Once you delete your account, there is no going back. Please be certain.</p>
@@ -242,9 +245,9 @@ export function ProfilePage({ user, onBack, onLogout, onUpdate }: ProfilePagePro
               />
               {errors.delete && <p className="text-red-500 text-sm">{errors.delete}</p>}
               <div className="flex gap-3 mt-4">
-                <button 
-                  onClick={handleDeleteAccount} 
-                  disabled={isLoading || deleteConfirmText !== profileData.username} 
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={isLoading || deleteConfirmText !== profileData.username}
                   className="bg-red-500 text-white flex-1 py-3 rounded-full font-bold disabled:opacity-50 flex justify-center items-center gap-2"
                 >
                   {isLoading && <Loader2 className="animate-spin w-4 h-4" />} Delete Forever
