@@ -34,39 +34,44 @@ export function MatchingPage() {
         }
         const token = await firebaseUser.getIdToken();
 
-        // Open SSE stream first
-        fetchEventSource(`${GATEWAY_URL}/matching/events`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-          signal: ctrl.signal,
-          openWhenHidden: true,
-          onopen: async (response) => {
-            if (!response.ok) {
-              throw new Error(`SSE open failed: ${response.status}`);
-            }
-          },
-          onmessage: (event) => {
-            if (matchedRef.current) return;
+        // Wait for SSE to be connected (Redis subscription active) before calling find-pair
+        await new Promise<void>((resolve, reject) => {
+          fetchEventSource(`${GATEWAY_URL}/matching/events`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: ctrl.signal,
+            openWhenHidden: true,
+            onopen: async (response) => {
+              if (!response.ok) {
+                reject(new Error(`SSE open failed: ${response.status}`));
+              }
+            },
+            onmessage: (event) => {
+              if (matchedRef.current) return;
 
-            if (event.event === 'match_found') {
-              matchedRef.current = true;
-              const data = JSON.parse(event.data);
-              navigate(`/session/${data.sessionId}`, { replace: true });
-            } else if (event.event === 'timeout') {
-              matchedRef.current = true;
-              toast.info('No match found. Try again!');
-              navigate('/dashboard', { replace: true });
-            } else if (event.event === 'connected') {
-              console.log('SSE connected');
+              if (event.event === 'match_found') {
+                matchedRef.current = true;
+                const data = JSON.parse(event.data);
+                navigate(`/session/${data.sessionId}`, { replace: true });
+              } else if (event.event === 'timeout') {
+                matchedRef.current = true;
+                toast.info('No match found. Try again!');
+                navigate('/dashboard', { replace: true });
+              } else if (event.event === 'connected') {
+                console.log('SSE connected');
+                resolve();
+              }
+            },
+            onerror: (err) => {
+              if (ctrl.signal.aborted) return;
+              console.error('SSE error:', err);
+              toast.error('Connection lost. Retrying...');
             }
-          },
-          onerror: (err) => {
-            if (ctrl.signal.aborted) return;
-            console.error('SSE error:', err);
-            toast.error('Connection lost. Retrying...');
-          }
+          });
         });
 
-        // Then call find-pair
+        if (ctrl.signal.aborted) return;
+
+        // SSE is connected — now safe to call find-pair
         const res = await fetch(`${GATEWAY_URL}/matching/find-pair`, {
           method: 'POST',
           headers: {
@@ -130,6 +135,15 @@ export function MatchingPage() {
     }, 500);
     return () => clearInterval(dotsTimer);
   }, []);
+
+  // Auto-timeout after 60 seconds
+  useEffect(() => {
+    if (elapsedTime >= 60 && !matchedRef.current) {
+      matchedRef.current = true;
+      toast.info('No match found after 60 seconds. Returning to dashboard.');
+      handleCancel();
+    }
+  }, [elapsedTime]);
 
   if (!criteria) return null;
 

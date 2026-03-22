@@ -91,23 +91,32 @@ export function CollaborationPage() {
   const editorSocketRef = useRef<Socket | null>(null);
   const chatSocketRef = useRef<Socket | null>(null);
   const ydocRef = useRef<Y.Doc | null>(null);
-  const ytextRef = useRef<Y.Text | null>(null);
+  const [ytext, setYtext] = useState<Y.Text | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const partnerRef = useRef<PartnerInfo | null>(null);
   const partnerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const partnerEndedRef = useRef(false);
   const startedAtRef = useRef<number>(Date.now());
 
+  // Keep partner ref in sync for use in chat socket handlers
+  useEffect(() => {
+    partnerRef.current = partner;
+  }, [partner]);
+
   // --- 3a. Session Data Fetching ---
   useEffect(() => {
     if (!sessionId || !user) return;
+    let cancelled = false;
 
     const fetchSessionData = async () => {
       try {
         const token = await getToken();
+        if (cancelled) return;
         const headers = { 'Authorization': `Bearer ${token}` };
 
         // Fetch session metadata
         const sessionRes = await fetch(`${GATEWAY_URL}/collab/session/${sessionId}`, { headers });
+        if (cancelled) return;
         if (!sessionRes.ok) throw new Error('Failed to fetch session');
         const meta: SessionMeta = await sessionRes.json();
         setSessionMeta(meta);
@@ -121,6 +130,7 @@ export function CollaborationPage() {
           fetch(`${GATEWAY_URL}/question/${meta.questionId}`, { headers }),
           fetch(`${GATEWAY_URL}/users/${partnerUid}`, { headers })
         ]);
+        if (cancelled) return;
 
         if (questionRes.ok) {
           setQuestion(await questionRes.json());
@@ -131,6 +141,7 @@ export function CollaborationPage() {
 
         setLoading(false);
       } catch (err: any) {
+        if (cancelled) return;
         console.error('Session data fetch error:', err);
         toast.error('Failed to load session data');
         navigate('/dashboard', { replace: true });
@@ -138,6 +149,7 @@ export function CollaborationPage() {
     };
 
     fetchSessionData();
+    return () => { cancelled = true; };
   }, [sessionId, user, navigate]);
 
   // --- 3b/3c. Editor Socket + Yjs ---
@@ -147,19 +159,23 @@ export function CollaborationPage() {
     const ydoc = new Y.Doc();
     const ytext = ydoc.getText('code');
     ydocRef.current = ydoc;
-    ytextRef.current = ytext;
+    setYtext(ytext);
 
     let editorSocket: Socket;
+    let cleaned = false;
 
     const connectEditor = async () => {
+      if (cleaned) return;
       try {
         const ticket = await fetchTicket(sessionId);
+        if (cleaned) return;
 
         editorSocket = io('http://localhost/editor', {
           path: '/socket.io',
           query: { ticket },
           transports: ['websocket'],
-          reconnection: false
+          reconnection: false,
+          forceNew: true
         });
 
         editorSocketRef.current = editorSocket;
@@ -188,11 +204,8 @@ export function CollaborationPage() {
         editorSocket.on('user-left', () => {
           // If partner already explicitly ended, don't show reconnecting
           if (partnerEndedRef.current) return;
+          setPartnerOnline(false);
           setPartnerStatus('Reconnecting...');
-          partnerTimeoutRef.current = setTimeout(() => {
-            setPartnerOnline(false);
-            setPartnerStatus('Partner has left');
-          }, 5000);
         });
 
         editorSocket.on('partner-ended', () => {
@@ -207,9 +220,10 @@ export function CollaborationPage() {
         });
 
         editorSocket.on('disconnect', async () => {
-          // Reconnect flow
+          if (cleaned) return;
           try {
             const newTicket = await fetchTicket(sessionId);
+            if (cleaned) return;
             editorSocket.io.opts.query = { ticket: newTicket };
             editorSocket.connect();
             toast('Reconnecting editor...');
@@ -225,6 +239,7 @@ export function CollaborationPage() {
           }
         });
       } catch (err) {
+        if (cleaned) return;
         console.error('Editor connect error:', err);
         toast.error('Failed to connect to editor. Retrying...');
         setTimeout(connectEditor, 3000);
@@ -234,7 +249,9 @@ export function CollaborationPage() {
     connectEditor();
 
     return () => {
+      cleaned = true;
       editorSocket?.disconnect();
+      setYtext(null);
       ydoc.destroy();
       if (partnerTimeoutRef.current) clearTimeout(partnerTimeoutRef.current);
     };
@@ -245,16 +262,20 @@ export function CollaborationPage() {
     if (loading || !sessionId || !user) return;
 
     let chatSocket: Socket;
+    let cleaned = false;
 
     const connectChat = async () => {
+      if (cleaned) return;
       try {
         const ticket = await fetchTicket(sessionId);
+        if (cleaned) return;
 
         chatSocket = io('http://localhost/chat', {
           path: '/socket.io',
           query: { ticket },
           transports: ['websocket'],
-          reconnection: false
+          reconnection: false,
+          forceNew: true
         });
 
         chatSocketRef.current = chatSocket;
@@ -264,7 +285,7 @@ export function CollaborationPage() {
             ...msg,
             sender: msg.sender === user.uid
               ? (user.username || user.Username)
-              : (partner?.username || 'Partner')
+              : (partnerRef.current?.username || 'Partner')
           }));
           setMessages(mapped);
         });
@@ -272,13 +293,15 @@ export function CollaborationPage() {
         chatSocket.on('receive-message', (msg: { sender: string; text: string; time: string }) => {
           const displayName = msg.sender === user.uid
             ? (user.username || user.Username)
-            : (partner?.username || 'Partner');
+            : (partnerRef.current?.username || 'Partner');
           setMessages(prev => [...prev, { ...msg, sender: displayName }]);
         });
 
         chatSocket.on('disconnect', async () => {
+          if (cleaned) return;
           try {
             const newTicket = await fetchTicket(sessionId);
+            if (cleaned) return;
             chatSocket.io.opts.query = { ticket: newTicket };
             chatSocket.connect();
           } catch {
@@ -286,6 +309,7 @@ export function CollaborationPage() {
           }
         });
       } catch (err) {
+        if (cleaned) return;
         console.error('Chat connect error:', err);
         setTimeout(connectChat, 3000);
       }
@@ -294,9 +318,10 @@ export function CollaborationPage() {
     connectChat();
 
     return () => {
+      cleaned = true;
       chatSocket?.disconnect();
     };
-  }, [loading, sessionId, user, partner]);
+  }, [loading, sessionId, user]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -320,13 +345,26 @@ export function CollaborationPage() {
   }, [newMessage]);
 
   // --- 5a. End Session ---
-  const handleEndSession = useCallback(() => {
+  const handleEndSession = useCallback(async () => {
     editorSocketRef.current?.emit('end-session');
     editorSocketRef.current?.disconnect();
     chatSocketRef.current?.disconnect();
     ydocRef.current?.destroy();
+
+    // Clear active session in backend BEFORE navigating,
+    // so ActiveSessionRedirect won't redirect back to this session
+    try {
+      const token = await getToken();
+      await fetch(`${GATEWAY_URL}/collab/end-session/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+    } catch {
+      // Navigate anyway even if this fails
+    }
+
     navigate('/dashboard', { replace: true });
-  }, [navigate]);
+  }, [navigate, sessionId]);
 
   const handleCopySessionId = () => {
     if (sessionId) {
@@ -343,8 +381,8 @@ export function CollaborationPage() {
   };
 
   // Yjs CodeMirror extensions
-  const editorExtensions = ytextRef.current
-    ? [python(), dracula, yCollab(ytextRef.current)]
+  const editorExtensions = ytext
+    ? [python(), dracula, yCollab(ytext)]
     : [python(), dracula];
 
   if (loading) {
@@ -442,16 +480,21 @@ export function CollaborationPage() {
                 </div>
               </div>
               <div className="rounded-xl overflow-hidden">
-                <CodeMirror
-                  value=""
-                  minHeight="400px"
-                  theme={dracula}
-                  extensions={editorExtensions}
-                  basicSetup={{
-                    lineNumbers: true,
-                    indentOnInput: true,
-                  }}
-                />
+                {ytext ? (
+                  <CodeMirror
+                    minHeight="400px"
+                    theme={dracula}
+                    extensions={editorExtensions}
+                    basicSetup={{
+                      lineNumbers: true,
+                      indentOnInput: true,
+                    }}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-[400px] text-gray-400">
+                    Initializing editor...
+                  </div>
+                )}
               </div>
               <div className="mt-3 flex items-center gap-2 text-sm text-gray-400">
                 <div className={`w-2 h-2 rounded-full animate-pulse ${partnerOnline ? 'bg-green-400' : 'bg-yellow-400'}`}></div>

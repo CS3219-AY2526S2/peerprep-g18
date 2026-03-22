@@ -91,7 +91,8 @@ async def verify_token(request: Request):
 # ==========================================
 async def create_or_join_session(match_data: dict, uid: str) -> dict:
     uid_A, uid_B = match_data["user1_id"], match_data["user2_id"]
-    lock_key = f"lock:match:{':'.join(sorted([uid_A, uid_B]))}"
+    match_id = match_data.get("match_id", f"{':'.join(sorted([uid_A, uid_B]))}:{match_data.get('topic', '')}:{match_data.get('difficulty', '')}:{match_data.get('matched_at', '')}")
+    lock_key = f"lock:match:{match_id}"
     session_id = str(uuid.uuid4())
 
     is_leader = await redis_sessions.setnx(lock_key, session_id)
@@ -111,6 +112,9 @@ async def create_or_join_session(match_data: dict, uid: str) -> dict:
             "startedAt": time.time()
         }
         await redis_sessions.set(f"session:{session_id}:meta", json.dumps(meta), ex=7200)
+        # Track active session for both users
+        await redis_sessions.set(f"active_session:{uid_A}", session_id, ex=7200)
+        await redis_sessions.set(f"active_session:{uid_B}", session_id, ex=7200)
         return {"sessionId": session_id, "questionId": question_id}
     else:
         winning_id = await redis_sessions.get(lock_key)
@@ -172,6 +176,20 @@ async def get_session(session_id: str, request: Request):
         raise HTTPException(403, "Not a member of this session")
     return {**meta, "sessionId": session_id}
 
+@app.get("/collab/active-session")
+async def get_active_session(request: Request):
+    decoded = await verify_token(request)
+    uid = decoded["uid"]
+    session_id = await redis_sessions.get(f"active_session:{uid}")
+    if not session_id:
+        return {"sessionId": None}
+    # Verify the session still exists
+    raw = await redis_sessions.get(f"session:{session_id}:meta")
+    if not raw:
+        await redis_sessions.delete(f"active_session:{uid}")
+        return {"sessionId": None}
+    return {"sessionId": session_id}
+
 @app.post("/collab/join")
 async def collab_join(request: Request):
     decoded = await verify_token(request)
@@ -195,6 +213,20 @@ async def collab_join(request: Request):
         ex=60  # 60-second one-time use
     )
     return {"ticket": ticket}
+
+@app.post("/collab/end-session/{session_id}")
+async def end_session_for_user(session_id: str, request: Request):
+    decoded = await verify_token(request)
+    uid = decoded["uid"]
+    raw = await redis_sessions.get(f"session:{session_id}:meta")
+    if not raw:
+        raise HTTPException(404, "Session not found")
+    meta = json.loads(raw)
+    if uid not in [meta["user1_id"], meta["user2_id"]]:
+        raise HTTPException(403, "Not a member of this session")
+    # Clear active session for this user so ActiveSessionRedirect won't redirect back
+    await redis_sessions.delete(f"active_session:{uid}")
+    return {"detail": "Active session cleared"}
 
 @app.get("/internal/validate")
 async def internal_validate(request: Request):
@@ -232,6 +264,9 @@ async def user_ended(session_id: str, request: Request):
     }
     await http_client.post("http://history-service:6770/history", json=history_payload)
 
+    # Clear active session tracking for this user
+    await redis_sessions.delete(f"active_session:{user_id}")
+
     # Flag this user's history as saved so cleanup doesn't duplicate it
     await redis_sessions.set(f"session:{session_id}:saved:{user_id}", "1", ex=7200)
 
@@ -265,7 +300,9 @@ async def session_ended(session_id: str):
         f"session:{session_id}:ydoc",
         f"session:{session_id}:chat",
         f"session:{session_id}:saved:{meta['user1_id']}",
-        f"session:{session_id}:saved:{meta['user2_id']}"
+        f"session:{session_id}:saved:{meta['user2_id']}",
+        f"active_session:{meta['user1_id']}",
+        f"active_session:{meta['user2_id']}"
     )
     return {"detail": "Session ended and history saved"}
 

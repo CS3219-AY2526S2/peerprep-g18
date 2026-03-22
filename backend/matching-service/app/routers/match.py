@@ -51,7 +51,8 @@ async def join_queue(request: FindPairRequest, x_user_id: str = Header(...)):
                         "user1_id": uid,
                         "user2_id": matched_uid,
                         "topic": topic,
-                        "difficulty": diff
+                        "difficulty": diff,
+                        "matched_at": str(time.time())
                     })
                     await database.redis_pubsub.publish(f"match_events:{uid}", match_payload)
                     await database.redis_pubsub.publish(f"match_events:{matched_uid}", match_payload)
