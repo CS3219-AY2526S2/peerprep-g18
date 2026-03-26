@@ -396,7 +396,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                         <button
                           key={diff}
                           type="button"
-                          onClick={() => setManagedQuestion({ ...managedQuestion, difficulty: diff })}
+                          // onClick={() => setManagedQuestion({ ...managedQuestion, difficulty: diff })}
                           className={`flex-1 py-2.5 rounded-xl font-bold transition-all text-sm ${
                             managedQuestion.difficulty === diff 
                               ? 'bg-[#E8B995] text-[#4A4563]' 
