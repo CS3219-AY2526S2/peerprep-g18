@@ -475,6 +475,28 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     </div>
                   </div>
 
+                  <div className="space-y-2">
+                    <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">
+                      Difficulty
+                    </label>
+                    <div className={`flex gap-3 ${!isEditing ? 'pointer-events-none' : ''}`}>
+                      {['Easy', 'Medium', 'Hard'].map((diff) => (
+                        <button
+                          key={diff}
+                          type="button"
+                          onClick={() => setManagedQuestion({ ...managedQuestion, difficulty: diff })}
+                          className={`flex-1 py-2.5 rounded-xl font-bold transition-all text-sm ${
+                            managedQuestion.difficulty === diff 
+                              ? 'bg-[#E8B995] text-[#4A4563]' 
+                              : 'bg-[#2D2942] text-white opacity-40'
+                          }`}
+                        >
+                          {diff}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* Problem Statement */}
                   <div className="space-y-2">
                     <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Problem Statement</label>
