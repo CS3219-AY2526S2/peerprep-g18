@@ -30,3 +30,18 @@ class Question(QuestionBase):
 
     class Config:
         from_attributes = True
+
+class QuestionMetadata(BaseModel):
+    question_id: str
+    title: str
+    topic: str
+    difficulty: str
+
+    class Config:
+        coerce_numbers_to_str = True
+
+class PaginatedQuestions(BaseModel):
+    questions: List[QuestionMetadata]
+    total_pages: int
+    current_page: int
+    total_items: int
