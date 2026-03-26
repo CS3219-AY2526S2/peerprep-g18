@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
 import { DynamicArrayInput } from './ui/DynamicArrayInput';
+import { QuestionModal } from './ui/QuestionModal'
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -24,9 +25,6 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   
-  // Question Management State
-  const [isEditing, setIsEditing] = useState(false); 
-  const [backupQuestion, setBackupQuestion] = useState<any>(null);
 
   // Question State
   const [searchId, setSearchId] = useState('');
@@ -34,16 +32,11 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
   const [isAddingQuestion, setIsAddingQuestion] = useState(false);
   
   // New Question Form State
-  const [newQuestion, setNewQuestion] = useState({
-    title: '',
-    topic: 'Arrays',
-    difficulty: 'Easy',
-    statement: '',
-    template: '',
-    examples: [''],
-    constraints: [''],
-    hints: ['']
-  });
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    mode: 'add' | 'edit';
+    data?: any;
+  }>({ isOpen: false, mode: 'add' });
 
   useEffect(() => {
     if (activeTab === 'users') {
@@ -71,16 +64,23 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
     }
   };
 
+  const handleModalSuccess = (updatedData?: any) => {
+    if (modalConfig.mode === 'edit' && updatedData) {
+      setManagedQuestion(updatedData);
+    }
+    // later if req, trigger fetchQuestions() over here
+  };
+
   const handleLookupQuestion = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!searchId.trim()) return;
 
-    if (isEditing) {
-      const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
-      if (hasChanges && !window.confirm("Discard changes to the current question and search for a new one?")) {
-        return;
-      }
-    }
+    // if (isEditing) {
+    //   const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
+    //   if (hasChanges && !window.confirm("Discard changes to the current question and search for a new one?")) {
+    //     return;
+    //   }
+    // }
 
     setActionLoading('lookup-q');
     setError('');
@@ -99,69 +99,27 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
 
       const data = await response.json();
       setManagedQuestion(data);
-      setIsEditing(false);
-      setBackupQuestion(null);
+      // setIsEditing(false);
+      // setBackupQuestion(null);
     } catch (err: any) {
       setError(err.message);
       setManagedQuestion(null);
-      setIsEditing(false);
+      // setIsEditing(false);
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleStartEditing = () => {
-    setBackupQuestion({ ...managedQuestion }); // Clone current state
-    setIsEditing(true);
-  };
-
-  const handleCancelEditing = () => {
-    // Check if anything actually changed before asking
-    const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
-    
-    if (hasChanges) {
-      if (window.confirm("You have unsaved changes. Are you sure you want to discard them?")) {
-        setManagedQuestion(backupQuestion);
-        setIsEditing(false);
-      }
-    } else {
-      setIsEditing(false);
-    }
-  };
-
-  const handleUpdateQuestion = async () => {
-    if (!managedQuestion) return;
-    setActionLoading('update-q');
-    try {
-      const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/question/${managedQuestion.question_id}`, {
-        method: 'PUT',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(managedQuestion)
-      });
-
-      if (!response.ok) throw new Error('Failed to update question');
-      
-      alert('Question updated successfully!');
-      setIsEditing(false); // Return to preview mode
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setActionLoading(null);
-    }
-  };
+  
   const handleTabChange = (tab: AdminTab) => {
-    if (isEditing) {
-      const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
-      if (hasChanges && !window.confirm("You have unsaved changes. Discard them?")) {
-        return; // Stay on current tab
-      }
-    }
+    // if (isEditing) {
+    //   const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
+    //   if (hasChanges && !window.confirm("You have unsaved changes. Discard them?")) {
+    //     return; // Stay on current tab
+    //   }
+    // }
     // Reset states when moving away
-    setIsEditing(false);
+    
     setManagedQuestion(null); 
     setSearchId('');
     setActiveTab(tab);
@@ -237,49 +195,21 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
     }
   };
 
-  const handleAddQuestion = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setActionLoading('add-question');
-    try {
-      const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/question/`, {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(newQuestion)
-      });
 
-      if (!response.ok) throw new Error('Failed to add question');
-      
-      setIsAddingQuestion(false);
-      setNewQuestion({
-        title: '', topic: 'Arrays', difficulty: 'Easy',
-        statement: '', template: '', examples: [''],
-        constraints: [''], hints: ['']
-      });
-      alert('Question added successfully!');
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setActionLoading(null);
-    }
-  };
 
   // Handle the case for unsaved changes when user tries to close the tab or navigate away through browser controls
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const hasChanges = isEditing && JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
-      if (hasChanges) {
-        e.preventDefault();
-        e.returnValue = ''; 
-      }
-    };
+  // useEffect(() => {
+  //   const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+  //     const hasChanges = isEditing && JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
+  //     if (hasChanges) {
+  //       e.preventDefault();
+  //       e.returnValue = ''; 
+  //     }
+  //   };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isEditing, managedQuestion, backupQuestion]);
+  //   window.addEventListener('beforeunload', handleBeforeUnload);
+  //   return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  // }, [isEditing, managedQuestion, backupQuestion]);
 
   return (
     <div className="min-h-screen p-6 bg-[#2D2942]">
@@ -388,7 +318,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-white font-bold text-2xl">Question Management</h2>
                 <button 
-                  onClick={() => setIsAddingQuestion(true)}
+                  onClick={() => setModalConfig({ isOpen: true, mode: 'add' })}
                   className="btn-secondary py-2 px-4 flex items-center gap-2"
                 >
                   <Plus className="w-5 h-5" />
@@ -427,15 +357,12 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                       <h3 className="text-white font-bold text-xl">Question #{managedQuestion.question_id}</h3>
                     </div>
                     <div className="flex gap-2">
-                      {!isEditing ? (
-                        <button onClick={handleStartEditing} className="btn-secondary py-1.5 px-4 text-sm flex items-center gap-2">
-                          <Plus className="w-4 h-4 rotate-45" /> Edit Question
-                        </button>
-                      ) : (
-                        <button onClick={handleCancelEditing} className="bg-gray-500/20 text-gray-300 hover:bg-gray-500/40 py-1.5 px-4 rounded-xl text-sm font-bold transition-all">
-                          Discard Changes
-                        </button>
-                      )}
+                      <button 
+                        onClick={() => setModalConfig({ isOpen: true, mode: 'edit', data: managedQuestion })} 
+                        className="btn-secondary py-1.5 px-4 text-sm flex items-center gap-2"
+                      >
+                        <Plus className="w-4 h-4 rotate-45" /> Edit Question
+                      </button>
                       <button onClick={() => handleDeleteQuestion(managedQuestion.question_id)} className="text-red-500 hover:bg-red-500/10 p-2 rounded-full transition-colors">
                         <Trash2 className="w-5 h-5" />
                       </button>
@@ -446,32 +373,17 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     <div className="space-y-2">
                       <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Title</label>
                       <input 
-                        disabled={!isEditing}
+                        disabled={true}
                         value={managedQuestion.title}
                         onChange={(e) => setManagedQuestion({...managedQuestion, title: e.target.value})}
-                        className={`input-field w-full bg-[#2D2942] ${!isEditing ? 'opacity-70 border-transparent cursor-default' : ''}`}
+                        className={`input-field w-full bg-[#2D2942]`}
                       />
                     </div>
                     <div className="space-y-2">
                       <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Topic</label>
-                      {isEditing ? (
-                        <select 
-                          value={managedQuestion.topic}
-                          onChange={(e) => setManagedQuestion({...managedQuestion, topic: e.target.value})}
-                          className="input-field w-full bg-[#2D2942] appearance-none"
-                        >
-                          <option>Arrays</option>
-                          <option>Strings</option>
-                          <option>Hash Tables</option>
-                          <option>Linked Lists</option>
-                          <option>Trees</option>
-                          <option>Graphs</option>
-                          <option>Greedy</option>
-                          <option>Dynamic Programming</option>
-                        </select>
-                      ) : (
+                      
                         <div className="input-field w-full bg-[#2D2942] opacity-70 border-transparent">{managedQuestion.topic}</div>
-                      )}
+                      
                     </div>
                   </div>
 
@@ -479,7 +391,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">
                       Difficulty
                     </label>
-                    <div className={`flex gap-3 ${!isEditing ? 'pointer-events-none' : ''}`}>
+                    <div className={`flex gap-3`}>
                       {['Easy', 'Medium', 'Hard'].map((diff) => (
                         <button
                           key={diff}
@@ -500,14 +412,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                   {/* Problem Statement */}
                   <div className="space-y-2">
                     <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Problem Statement</label>
-                    {isEditing ? (
-                      <textarea 
-                        rows={6}
-                        value={managedQuestion.statement}
-                        onChange={(e) => setManagedQuestion({...managedQuestion, statement: e.target.value})}
-                        className="input-field w-full bg-[#2D2942] rounded-[20px] resize-none focus:ring-2 ring-[#E8B995]/50"
-                      />
-                    ) : (
+                    
                       <div className="prose prose-invert max-w-none text-white bg-[#2D2942]/50 p-6 rounded-[24px] border border-white/5">
                         <ReactMarkdown 
                           remarkPlugins={[remarkMath]} 
@@ -522,7 +427,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                           {managedQuestion.statement}
                         </ReactMarkdown>
                       </div>
-                    )}
+                    
                   </div>
 
                   <div className="space-y-10">
@@ -530,7 +435,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     <DynamicArrayInput 
                       label="Examples" 
                       items={managedQuestion.examples || ['']} 
-                      isEditing={isEditing}
+                      isEditing={false}
                       minRows={4}
                       onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, examples: val})} 
                     />
@@ -538,7 +443,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     <DynamicArrayInput 
                       label="Constraints" 
                       items={managedQuestion.constraints || ['']} 
-                      isEditing={isEditing}
+                      isEditing={false}
                       minRows={2}
                       onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, constraints: val})} 
                     />
@@ -546,7 +451,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                     <DynamicArrayInput 
                       label="Hints" 
                       items={managedQuestion.hints || ['']} 
-                      isEditing={isEditing}
+                      isEditing={false}
                       minRows={2}
                       onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, hints: val})} 
                     />
@@ -555,19 +460,19 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                   {/* Code Template */}
                   <div className="space-y-2">
                     <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Python Code Template</label>
-                    <div className={`rounded-[24px] overflow-hidden border-2 transition-all ${isEditing ? 'border-[#E8B995]' : 'border-white/5'}`}>
+                    <div className={`rounded-[24px] overflow-hidden border-2 transition-all border-white/5`}>
                       <CodeMirror
                         value={managedQuestion.template}
                         minHeight="150px"
                         theme={dracula}
                         extensions={[python()]}
-                        readOnly={!isEditing}
+                        readOnly={true}
                         onChange={(value) => setManagedQuestion({ ...managedQuestion, template: value })}
                       />
                     </div>
                   </div>
 
-                  {isEditing && (
+                  {/* {isEditing && (
                     <button 
                       onClick={handleUpdateQuestion}
                       disabled={actionLoading === 'update-q'}
@@ -576,7 +481,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
                       {actionLoading === 'update-q' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                       Save Changes
                     </button>
-                  )}
+                  )} */}
                 </div>
               )}
             </>
@@ -585,7 +490,7 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
       </div>
 
       {/* Add Question Modal (Remains similar but with direct creation) */}
-      {isAddingQuestion && (
+      {/* {isAddingQuestion && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 z-50">
           <div className="bg-[#4A4563] rounded-[32px] w-full max-w-2xl max-h-[90vh] overflow-y-auto p-8 relative custom-scrollbar">
             <button 
@@ -714,7 +619,15 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
             </form>
           </div>
         </div>
-      )}
+      )} */}
+
+      <QuestionModal 
+        isOpen={modalConfig.isOpen}
+        mode={modalConfig.mode}
+        initialData={modalConfig.data}
+        onClose={() => setModalConfig({ ...modalConfig, isOpen: false })}
+        onSuccess={handleModalSuccess}
+      />
 
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
