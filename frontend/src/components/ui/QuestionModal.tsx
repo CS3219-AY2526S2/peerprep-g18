@@ -12,9 +12,11 @@ interface QuestionModalProps {
   onSuccess: (updatedData?: any) => void;
   mode: 'add' | 'edit';
   initialData?: any;
+  topics: string[];
+  difficulties: string[];
 }
 
-export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData }: QuestionModalProps) {
+export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, topics, difficulties }: QuestionModalProps) {
   const [formData, setFormData] = useState({
     title: '',
     topic: 'Arrays',
@@ -32,45 +34,6 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData }:
   const [newTopicInput, setNewTopicInput] = useState('');
   const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const [initialRef, setInitialRef] = useState(JSON.stringify(formData));
-
-  // Sync state when opening
-  useEffect(() => {
-    const fetchTopics = async () => {
-      setIsLoadingTopics(true);
-      try {
-        const token = localStorage.getItem('peerprep_token'); 
-        const response = await fetch(`${GATEWAY_URL}/question/topics`, {
-          headers: { 
-            'Authorization': `Bearer ${token}` 
-          }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          let updatedTopics = [...data];
-
-          
-          if (mode === 'edit' && initialData?.topic && !updatedTopics.includes(initialData.topic)) {
-            updatedTopics.push(initialData.topic);
-          }
-
-          const sortedTopics = updatedTopics.sort((a, b) => a.localeCompare(b));
-          setExistingTopics(sortedTopics);
-
-          if (mode === 'add' && sortedTopics.length > 0) {
-            setFormData(prev => ({ ...prev, topic: sortedTopics[0] }));
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch topics:", err);
-        setExistingTopics([]); 
-      } finally {
-        setIsLoadingTopics(false);
-      }
-    };
-
-    if (isOpen) fetchTopics();
-  }, [isOpen, mode, initialData?.topic]);
-
  
   useEffect(() => {
     if (isOpen) {
@@ -87,53 +50,81 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData }:
     const hasUnsavedChanges = JSON.stringify(formData) !== initialRef || (isCreatingNewTopic && newTopicInput !== '');
 
     const handleCloseAttempt = () => {
-    if (hasUnsavedChanges) {
-        if (window.confirm("You have unsaved changes. Are you sure you want to discard them?")) {
-        onClose();
+        if (hasUnsavedChanges) {
+            if (window.confirm("You have unsaved changes. Are you sure you want to discard them?")) {
+                onClose();
+            }
+        } else {
+            onClose();
         }
-    } else {
-        onClose();
-    }
     };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const finalData = {
-      ...formData,
-      topic: isCreatingNewTopic ? newTopicInput.trim() : formData.topic
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+
+        const cleanTitle = String(formData.title).trim();
+        const cleanTopic = isCreatingNewTopic
+            ? String(newTopicInput).trim()
+            : String(formData.topic).trim();
+
+        const reservedNames = ['all', 'all topics', 'any', 'any topic', 'all topic'];
+        if (isCreatingNewTopic && reservedNames.includes(cleanTopic.toLowerCase())) {
+            alert(`"${cleanTopic}" is a reserved system name. Please choose a different name.`);
+            return;
+        }
+
+        if (!cleanTitle || !cleanTopic) {
+            alert("Title and Topic cannot be empty or just whitespace.");
+            return;
+        }
+
+        const finalData = {
+            ...formData,
+            title: cleanTitle,
+            topic: cleanTopic,
+            statement: formData.statement.trim()
+        };
+
+        setIsSubmitting(true);
+        try {
+            const token = localStorage.getItem('peerprep_token');
+            const url = mode === 'add'
+                ? `${GATEWAY_URL}/question/`
+                : `${GATEWAY_URL}/question/${initialData.question_id}`;
+
+            const response = await fetch(url, {
+                method: mode === 'add' ? 'POST' : 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(finalData)
+            });
+
+            if (!response.ok) throw new Error(`Failed to ${mode} question`);
+
+            const savedData = await response.json();
+            onSuccess(savedData);
+            onClose();
+        } catch (err: any) {
+            alert(err.message);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
-    if (isCreatingNewTopic && !newTopicInput.trim()) { // prevent the admin from creating a new topic with an empty name (using a space to bypass the default value check)
-      alert("Please enter a name for the new topic");
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      const token = localStorage.getItem('peerprep_token');
-      const url = mode === 'add' 
-        ? `${GATEWAY_URL}/question/` 
-        : `${GATEWAY_URL}/question/${initialData.question_id}`;
-      
-      const response = await fetch(url, {
-        method: mode === 'add' ? 'POST' : 'PUT',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(finalData)
-      });
+    useEffect(() => {
+      const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+          // intercept if the modal is actually open and has changes
+          if (isOpen && hasUnsavedChanges) {
+              e.preventDefault();
+              e.returnValue = ''; // Trigger the browser's generic "Discard changes?" box
+          }
+      };
 
-      if (!response.ok) throw new Error(`Failed to ${mode} question`);
-      
-      const savedData = await response.json();
-      onSuccess(savedData);
-      onClose();
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isOpen, hasUnsavedChanges]);
 
   if (!isOpen) return null;
 
@@ -191,16 +182,11 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData }:
                 <select 
                     value={formData.topic}
                     onChange={(e) => setFormData({...formData, topic: e.target.value})}
-                    disabled={isLoadingTopics}
                     className="input-field w-full bg-[#3A3552] appearance-none"
                 >
-                    {isLoadingTopics ? (
-                    <option>Loading topics...</option>
-                    ) : (
-                    existingTopics.map(t => (
+                    {topics.map(t => (
                         <option key={t} value={t}>{t}</option>
-                    ))
-                    )}
+                    ))}
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
                     <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
