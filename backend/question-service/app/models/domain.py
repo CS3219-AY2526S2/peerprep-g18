@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 
 class QuestionBase(BaseModel):
@@ -30,6 +30,11 @@ class Question(QuestionBase):
 
     class Config:
         from_attributes = True
+
+    @field_validator('question_id', mode='before')
+    @classmethod
+    def transform_id_to_string(cls, v):
+        return str(v)
 
 class QuestionMetadata(BaseModel):
     question_id: str
