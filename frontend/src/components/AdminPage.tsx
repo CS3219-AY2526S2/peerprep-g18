@@ -434,26 +434,26 @@ export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
   
                     <DynamicArrayInput 
                       label="Examples" 
-                      items={managedQuestion.examples || ['']} 
+                      items={managedQuestion.examples?.filter((e: string) => e.trim() !== '') || []}
                       isEditing={false}
                       minRows={4}
-                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, examples: val})} 
+                      emptyMessage="No examples provided for this question."
                     />
 
                     <DynamicArrayInput 
                       label="Constraints" 
-                      items={managedQuestion.constraints || ['']} 
+                      items={managedQuestion.constraints?.filter((c: string) => c.trim() !== '') || []}
                       isEditing={false}
                       minRows={2}
-                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, constraints: val})} 
+                      emptyMessage="No specific constraints defined."
                     />
 
                     <DynamicArrayInput 
                       label="Hints" 
-                      items={managedQuestion.hints || ['']} 
+                      items={managedQuestion.hints?.filter((h: string) => h.trim() !== '') || []}
                       isEditing={false}
                       minRows={2}
-                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, hints: val})} 
+                      emptyMessage="No hints available."
                     />
                   </div>
 
