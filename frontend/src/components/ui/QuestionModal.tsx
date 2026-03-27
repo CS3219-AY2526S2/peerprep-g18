@@ -31,9 +31,10 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData }:
   const [isCreatingNewTopic, setIsCreatingNewTopic] = useState(false);
   const [newTopicInput, setNewTopicInput] = useState('');
   const [isLoadingTopics, setIsLoadingTopics] = useState(false);
+  const [initialRef, setInitialRef] = useState(JSON.stringify(formData));
 
   // Sync state when opening
-useEffect(() => {
+  useEffect(() => {
     const fetchTopics = async () => {
       setIsLoadingTopics(true);
       try {
@@ -70,22 +71,30 @@ useEffect(() => {
     if (isOpen) fetchTopics();
   }, [isOpen, mode, initialData?.topic]);
 
-  // Sync state when opening (Modified to handle topic logic)
+ 
   useEffect(() => {
     if (isOpen) {
-      setIsCreatingNewTopic(false); // Reset toggle
-      setNewTopicInput('');
-      if (mode === 'edit' && initialData) {
-        setFormData({ ...initialData });
-      } else {
-        setFormData({
-          title: '', topic: existingTopics[0] || 'Arrays', difficulty: 'Easy',
-          statement: '', template: '', examples: [''],
-          constraints: [''], hints: ['']
-        });
-      }
+        const dataToLoad = (mode === 'edit' && initialData) ? initialData : {
+        title: '', topic: existingTopics[0] || 'Arrays', difficulty: 'Easy',
+        statement: '', template: '', examples: [''],
+        constraints: [''], hints: ['']
+        };
+        setFormData(dataToLoad);
+        setInitialRef(JSON.stringify(dataToLoad));
     }
-  }, [isOpen, mode, initialData, existingTopics]);
+    }, [isOpen, mode, initialData, existingTopics]);
+
+    const hasUnsavedChanges = JSON.stringify(formData) !== initialRef || (isCreatingNewTopic && newTopicInput !== '');
+
+    const handleCloseAttempt = () => {
+    if (hasUnsavedChanges) {
+        if (window.confirm("You have unsaved changes. Are you sure you want to discard them?")) {
+        onClose();
+        }
+    } else {
+        onClose();
+    }
+    };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,8 +103,8 @@ useEffect(() => {
       topic: isCreatingNewTopic ? newTopicInput.trim() : formData.topic
     };
 
-    if (isCreatingNewTopic && !newTopicInput.trim()) {
-      alert("Please enter a name for the new topic.");
+    if (isCreatingNewTopic && !newTopicInput.trim()) { // prevent the admin from creating a new topic with an empty name (using a space to bypass the default value check)
+      alert("Please enter a name for the new topic");
       return;
     }
     setIsSubmitting(true);
@@ -110,7 +119,6 @@ useEffect(() => {
         headers: { 
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
-          'X-User-Role': 'admin' 
         },
         body: JSON.stringify(finalData)
       });
@@ -132,13 +140,12 @@ useEffect(() => {
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-6 z-[100]">
       <div className="bg-[#4A4563] rounded-[32px] w-full max-w-3xl max-h-[90vh] overflow-y-auto p-10 relative custom-scrollbar border border-white/10 shadow-2xl">
-        <button onClick={onClose} className="absolute top-6 right-6 text-gray-400 hover:text-white transition-colors">
+        <button onClick={handleCloseAttempt} className="absolute top-6 right-6 text-gray-400 hover:text-white transition-colors">
           <X className="w-8 h-8" />
         </button>
         
         <h2 className="text-white font-bold text-3xl mb-8 flex items-center gap-3">
-          <div className={`w-3 h-8 rounded-full ${mode === 'add' ? 'bg-green-400' : 'bg-[#E8B995]'}`} />
-          {mode === 'add' ? 'Create New Question' : `Edit Question #${initialData.question_id}`}
+          {mode === 'add' ? 'Add New Question' : `Edit Question #${initialData.question_id}`}
         </h2>
         
         <form onSubmit={handleSubmit} className="space-y-8">
@@ -270,20 +277,18 @@ useEffect(() => {
           </div>
 
           {/* Action Buttons: Save or Discard */}
-          <div className="flex gap-4 sticky bottom-0 bg-[#4A4563] pt-4 pb-2">
+          <div className="flex gap-4  bottom-0 bg-[#4A4563] pt-4 pb-2">
             <button 
               type="button"
-              onClick={() => {
-                if (window.confirm("Discard all changes?")) onClose();
-              }}
+              onClick={handleCloseAttempt}
               className="flex-1 px-6 py-4 rounded-2xl font-bold text-gray-300 bg-white/5 hover:bg-white/10 transition-all"
             >
-              Discard Changes
+              Discard
             </button>
             <button 
               type="submit" 
               disabled={isSubmitting}
-              className="flex-[2] btn-secondary py-4 text-lg flex items-center justify-center gap-2"
+              className="flex-1 btn-secondary py-4 text-lg flex items-center justify-center gap-2"
             >
               {isSubmitting ? <Loader2 className="w-6 h-6 animate-spin" /> : <Save className="w-6 h-6" />}
               {mode === 'add' ? 'Create Question' : 'Save Changes'}
