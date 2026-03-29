@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Header, Response, status
 from app.schemas import FindPairRequest, MatchResponse, MatchStatusResponse
 from app import database
 
-router = APIRouter()
+router = APIRouter(prefix="/matching")
 
 #def generate_queue_name(topic: str, difficulty: str) -> str:
 #    return f"queue:{topic.lower().replace(' ', '_')}:{difficulty.lower()}"
