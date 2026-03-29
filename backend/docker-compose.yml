@@ -24,10 +24,8 @@ services:
       - ./api-gateway:/app
     depends_on:
       - user-service
-      - redis-event-bus # Listen for match events
     environment:
       - PYTHONUNBUFFERED=1
-      - REDIS_EVENT_BUS_HOST=redis-event-bus
 
   # ==========
   # The (Internal) Services
@@ -68,25 +66,18 @@ services:
     container_name: matching-service
     expose:
       - "6769"
+    ports:
+      - "6769:6769"
     volumes:
       - ./matching-service:/app
     depends_on:
       - redis-matching    # User queue
-      - redis-event-bus   # To publish event
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_MATCH_HOST=redis-matching
-      - REDIS_EVENT_BUS_HOST=redis-event-bus
   
   redis-matching:
     image: redis:7-alpine
     container_name: redis-matching
-    expose:
-      - "6379"
-  
-  # Event bus for communication between API gateway/Matching service
-  redis-event-bus:
-    image: redis:7-alpine
-    container_name: redis-event-bus
     expose:
       - "6379"
