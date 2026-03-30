@@ -70,7 +70,7 @@ async def verify_token(request: Request):
     try:
         decoded_token = auth.verify_id_token(token, clock_skew_seconds=30)
     except Exception as e:
-        print(f"❌ FIREBASE ERROR: {str(e)}")
+        print(f"FIREBASE ERROR: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Auth Failed: {str(e)}")
 
     uid = decoded_token.get("uid")
@@ -92,7 +92,7 @@ async def verify_token(request: Request):
     except HTTPException:
         raise  # Always re-raise our own 401/403 decisions
     except Exception as e:
-        print(f"⚠️  Redis auth check failed (failing open): {e}")
+        print(f"Redis auth check failed (failing open): {e}")
 
     return decoded_token
 
