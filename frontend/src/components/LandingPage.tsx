@@ -1,10 +1,9 @@
+import { useNavigate } from 'react-router-dom';
 import { Code2, Users, MessageSquare, Zap } from 'lucide-react';
 
-interface LandingPageProps {
-  onGetStarted: () => void;
-}
+export function LandingPage() {
+  const navigate = useNavigate();
 
-export function LandingPage({ onGetStarted }: LandingPageProps) {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6">
       <div className="max-w-6xl w-full">
@@ -19,7 +18,7 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
           <p className="text-lg text-gray-600 mb-8 max-w-2xl mx-auto">
             Connect with peers, solve coding problems in real-time, and ace your next technical interview
           </p>
-          <button onClick={onGetStarted} className="btn-secondary text-xl px-12 py-4">
+          <button onClick={() => navigate('/auth')} className="btn-secondary text-xl px-12 py-4">
             Get Started
           </button>
         </div>

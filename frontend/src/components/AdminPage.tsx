@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
 import { DynamicArrayInput } from './ui/DynamicArrayInput';
+import { useUser } from '../contexts/UserContext';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -10,14 +12,16 @@ import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 import { dracula } from '@uiw/codemirror-theme-dracula';
 
-interface AdminPageProps {
-  currentUser: any;
-  onLogout: () => void;
-}
-
 type AdminTab = 'users' | 'questions';
 
-export function AdminPage({ currentUser, onLogout }: AdminPageProps) {
+export function AdminPage() {
+  const navigate = useNavigate();
+  const { user: currentUser, handleLogout } = useUser();
+
+  const onLogout = async () => {
+    await handleLogout();
+    navigate('/', { replace: true });
+  };
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
   const [users, setUsers] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);

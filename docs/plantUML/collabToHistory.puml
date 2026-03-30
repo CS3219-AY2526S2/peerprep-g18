@@ -1,0 +1,157 @@
+@startuml Collaboration to History — Session End & Cleanup
+!theme plain
+skinparam responseMessageBelowArrow true
+
+title Collaboration -> History Service — Session End & Cleanup
+
+actor "User A" as UA
+actor "User B" as UB
+participant "Frontend A" as FEA
+participant "Frontend B" as FEB
+participant "Collab Service\n(Socket.IO + REST)" as Collab
+participant "History Service" as HS
+database "Redis\n(Sessions)" as Redis
+database "Firestore\n(session_history)" as FS
+
+== Active Session ==
+
+UA <-> Collab: /editor — Yjs updates (WebSocket)
+UB <-> Collab: /editor — Yjs updates (WebSocket)
+UA <-> Collab: /chat — messages (WebSocket)
+UB <-> Collab: /chat — messages (WebSocket)
+
+note over Collab, Redis
+  During the session, every code edit triggers:
+  - RPUSH session:{id}:ydoc (Yjs binary update, base64)
+  - SET session:{id}:finalCode (plaintext snapshot)
+  Chat messages stored via RPUSH session:{id}:chat
+  (trimmed to last 500 with LTRIM)
+end note
+
+== User A Ends Session (explicit) ==
+
+UA -> FEA: Click "End Session"
+FEA -> Collab: emit 'end-session' (/editor)
+activate Collab
+Collab -> Collab: Snapshot code:\nydoc.getText('code').toString()
+
+note over Collab: handleUserEnded(sessionId, userId, finalCode)\n[in-process — no HTTP to api-gateway]
+
+Collab -> Redis: GET session:{id}:meta
+Redis --> Collab: {user1_id, user2_id, questionId, ...}
+Collab -> Collab: Build history payload\n{...meta, sessionId, finalCode,\nendedAt, submittedBy: A}
+Collab -> HS: POST /history
+activate HS
+HS -> FS: Set document({sessionId}_{uid_A})\nin session_history collection
+FS --> HS: OK
+HS --> Collab: 201 Created
+deactivate HS
+Collab -> Redis: DELETE active_session:{uid_A}
+Collab -> Redis: SET session:{id}:saved:{uid_A} "1" EX 7200
+
+Collab -> UB: emit 'partner-ended'\n{userId: A}
+deactivate Collab
+
+FEA -> Collab: POST /collab/end-session/{sessionId}\n(via API Gateway, Auth: JWT_A)
+activate Collab
+Collab -> Redis: DELETE active_session:{uid_A}
+note right: Idempotent — may already\nbe cleared by handleUserEnded
+Collab --> FEA: 200 {detail: "Active session cleared"}
+deactivate Collab
+FEA -> FEA: navigate('/dashboard')
+
+note over UB, FEB: User B sees modal:\n"Partner left. Continue or End?"
+
+== User B Chooses "Continue Coding" ==
+
+UB -> FEB: Dismiss modal,\ncontinue editing solo
+
+note over UB, Collab: User B can keep editing.\nCode changes still persist to Redis.
+
+== User B Eventually Ends Session ==
+
+UB -> FEB: Click "End Session"
+FEB -> Collab: emit 'end-session' (/editor)
+activate Collab
+Collab -> Collab: Snapshot updated code
+
+note over Collab: handleUserEnded(sessionId, userId, finalCode)\n[in-process]
+
+Collab -> Redis: GET session:{id}:meta
+Collab -> Collab: Build history payload\n{...meta, finalCode, endedAt, submittedBy: B}
+Collab -> HS: POST /history
+activate HS
+HS -> FS: Set document({sessionId}_{uid_B})\nin session_history collection
+FS --> HS: OK
+HS --> Collab: 201 Created
+deactivate HS
+Collab -> Redis: DELETE active_session:{uid_B}
+Collab -> Redis: SET session:{id}:saved:{uid_B} "1" EX 7200
+deactivate Collab
+
+FEB -> Collab: POST /collab/end-session/{sessionId}\n(via API Gateway, Auth: JWT_B)
+Collab -> Redis: DELETE active_session:{uid_B}
+Collab --> FEB: 200
+
+UB ->x Collab: /editor WebSocket disconnect
+
+== Alternative: User Disconnects Without Ending ==
+
+note over Collab
+  If a user disconnects without emitting 'end-session'
+  (e.g., closes browser tab, network failure):
+end note
+
+UA ->x Collab: /editor WebSocket disconnect
+activate Collab
+Collab -> Collab: Remove userId from\nconnectedEditors set
+Collab -> UB: emit 'user-left'\n{userId: A, message: "Partner disconnected"}
+
+Collab -> Collab: Start **30s per-user timer**\nfor User A
+
+alt User A reconnects within 30s
+    UA -> Collab: Reconnect /editor\n(new ticket required)
+    Collab -> Collab: Clear User A's timer\nRe-add to connectedEditors
+    Collab -> UB: emit 'user-joined' {userId: A}
+else 30s timer expires — treat as end-session
+    Collab -> Collab: Snapshot code
+    note over Collab: handleUserEnded(sessionId, uid_A, finalCode)\n[in-process]
+    Collab -> Redis: GET session:{id}:meta
+    Collab -> HS: POST /history (save A's history)
+    Collab -> Redis: DELETE active_session:{uid_A}
+    Collab -> Redis: SET session:{id}:saved:{uid_A} "1" EX 7200
+    Collab -> UB: emit 'partner-ended' {userId: A}
+end
+deactivate Collab
+
+== All Users Gone — Final Cleanup (5s timer) ==
+
+note over Collab
+  When the last user's 30s disconnect timer expires
+  and connectedEditors.size == 0, a **5s session
+  cleanup timer** starts.
+end note
+
+Collab -> Collab: connectedEditors.size == 0\nStart **5s cleanup timer**
+
+activate Collab
+note over Collab: handleSessionEnded(sessionId)\n[in-process — no HTTP to api-gateway]
+
+Collab -> Redis: GET session:{id}:meta
+Collab -> Redis: GET session:{id}:saved:{uid_A}
+Collab -> Redis: GET session:{id}:saved:{uid_B}
+
+alt User not yet saved
+    Collab -> Collab: Build history from meta + finalCode
+    Collab -> HS: POST /history (fallback save)
+end
+
+note over Collab: Check saved flags for each user.\nSkip if already saved via end-session\nor disconnect timeout.
+
+Collab -> Redis: DELETE session:{id}:meta\nsession:{id}:finalCode\nsession:{id}:ydoc\nsession:{id}:chat\nsession:{id}:saved:{uid_A}\nsession:{id}:saved:{uid_B}\nactive_session:{uid_A}\nactive_session:{uid_B}
+Redis --> Collab: OK
+
+Collab -> Collab: sessions.delete(sessionId)\n(remove from in-memory Map)
+deactivate Collab
+
+@enduml
