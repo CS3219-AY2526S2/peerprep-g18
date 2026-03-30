@@ -96,6 +96,7 @@ export function CollaborationPage() {
   const partnerRef = useRef<PartnerInfo | null>(null);
   const partnerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const partnerEndedRef = useRef(false);
+  const sessionEndedRef = useRef(false);
   const startedAtRef = useRef<number>(Date.now());
 
   // Keep partner ref in sync for use in chat socket handlers
@@ -220,10 +221,10 @@ export function CollaborationPage() {
         });
 
         editorSocket.on('disconnect', async () => {
-          if (cleaned) return;
+          if (cleaned || sessionEndedRef.current) return;
           try {
             const newTicket = await fetchTicket(sessionId);
-            if (cleaned) return;
+            if (cleaned || sessionEndedRef.current) return;
             editorSocket.io.opts.query = { ticket: newTicket };
             editorSocket.connect();
             toast('Reconnecting editor...');
@@ -298,10 +299,10 @@ export function CollaborationPage() {
         });
 
         chatSocket.on('disconnect', async () => {
-          if (cleaned) return;
+          if (cleaned || sessionEndedRef.current) return;
           try {
             const newTicket = await fetchTicket(sessionId);
-            if (cleaned) return;
+            if (cleaned || sessionEndedRef.current) return;
             chatSocket.io.opts.query = { ticket: newTicket };
             chatSocket.connect();
           } catch {
@@ -346,6 +347,7 @@ export function CollaborationPage() {
 
   // --- 5a. End Session ---
   const handleEndSession = useCallback(async () => {
+    sessionEndedRef.current = true;
     editorSocketRef.current?.emit('end-session');
     editorSocketRef.current?.disconnect();
     chatSocketRef.current?.disconnect();
