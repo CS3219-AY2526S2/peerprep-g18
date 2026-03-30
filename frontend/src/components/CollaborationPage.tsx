@@ -535,9 +535,11 @@ export function CollaborationPage() {
             <div className="card-peach">
               <h3 className="text-[#4A4563] font-bold mb-4">Your Partner</h3>
               <div className="flex items-center gap-3">
-                <div className="w-16 h-16 rounded-full border-2 border-[#4A4563] bg-[#4A4563] flex items-center justify-center text-white font-bold text-xl">
-                  {partnerUsername.charAt(0).toUpperCase()}
-                </div>
+                <img
+                  src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${partner?.avatar_id ?? 1}`}
+                  alt={partnerUsername}
+                  className="w-16 h-16 rounded-full border-2 border-[#4A4563]"
+                />
                 <div>
                   <p className="text-[#4A4563] font-semibold">@{partnerUsername}</p>
                   <p className={`text-sm ${partnerOnline ? 'text-green-600' : 'text-gray-600'}`}>{partnerStatus}</p>
@@ -549,19 +551,38 @@ export function CollaborationPage() {
             <div className="card-purple flex flex-col h-[500px]">
               <h3 className="text-white font-bold mb-4">Chat</h3>
               <div className="flex-1 bg-[#3A3552] rounded-xl p-4 overflow-y-auto mb-4 custom-scrollbar">
-                {messages.map((msg, index) => (
-                  <div key={index} className={`mb-4 ${msg.sender === displayUsername ? 'text-right' : ''}`}>
-                    <div className={`inline-block max-w-[80%] ${
-                      msg.sender === 'System' ? 'bg-[#2D2838] text-gray-300 text-center w-full' :
-                      msg.sender === displayUsername ? 'bg-[#E8B995] text-[#4A4563]' :
-                      'bg-[#4A4563] text-white'
-                    } rounded-2xl px-4 py-2`}>
-                      {msg.sender !== 'System' && <p className="text-xs opacity-70 mb-1">@{msg.sender}</p>}
-                      <p className="text-sm">{msg.text}</p>
-                      <p className="text-xs opacity-70 mt-1">{msg.time}</p>
+                {messages.map((msg, index) => {
+                  const isOwn = msg.sender === displayUsername;
+                  const isSystem = msg.sender === 'System';
+                  const avatarSrc = isOwn
+                    ? user.avatar
+                    : `https://api.dicebear.com/7.x/avataaars/svg?seed=${partner?.avatar_id ?? 1}`;
+
+                  if (isSystem) {
+                    return (
+                      <div key={index} className="mb-4">
+                        <div className="bg-[#2D2838] text-gray-300 text-center w-full rounded-2xl px-4 py-2">
+                          <p className="text-sm">{msg.text}</p>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={index} className={`mb-4 flex items-end gap-2 ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <img
+                        src={avatarSrc}
+                        alt={msg.sender}
+                        className="w-7 h-7 rounded-full flex-shrink-0"
+                      />
+                      <div className={`max-w-[75%] ${isOwn ? 'bg-[#E8B995] text-[#4A4563]' : 'bg-[#4A4563] text-white'} rounded-2xl px-4 py-2`}>
+                        <p className="text-xs opacity-70 mb-1">@{msg.sender}</p>
+                        <p className="text-sm">{msg.text}</p>
+                        <p className="text-xs opacity-70 mt-1">{msg.time}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <div ref={messagesEndRef} />
               </div>
               <div className="flex gap-2">

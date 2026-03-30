@@ -10,6 +10,7 @@ interface UserContextType {
   loading: boolean;
   handleLoginSuccess: (uid: string, token: string) => Promise<void>;
   handleLogout: () => Promise<void>;
+  updateAvatar: (avatarId: number) => void;
 }
 
 const UserContext = createContext<UserContextType>(null!);
@@ -18,6 +19,17 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const hasRehydrated = useRef(false);
+
+  // Patches the in-memory user state after a successful avatar update,
+  // avoiding a full profile re-fetch.
+  const updateAvatar = (avatarId: number) => {
+    setUser((prev: any) => ({
+      ...prev,
+      avatar_id: avatarId,
+      is_new_user: false,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarId}`
+    }));
+  };
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -47,7 +59,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           setUser({
             ...profileData,
             uid,
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileData.email}`
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileData.avatar_id}`
           });
           return;
         }
@@ -185,7 +197,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <UserContext.Provider value={{ user, setUser, loading, handleLoginSuccess, handleLogout }}>
+    <UserContext.Provider value={{ user, setUser, loading, handleLoginSuccess, handleLogout, updateAvatar }}>
       {children}
     </UserContext.Provider>
   );
