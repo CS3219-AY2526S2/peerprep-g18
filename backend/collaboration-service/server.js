@@ -8,6 +8,7 @@ const axios = require('axios');
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -146,12 +147,9 @@ editorNs.on('connection', async (socket) => {
     // Snapshot the code at the moment this user leaves
     const finalCode = session.ydoc.getText('code').toString();
 
-    // Save this user's history via api-gateway
+    // Save this user's history
     try {
-      await axios.post(
-        `http://api-gateway:1234/internal/collab/user-ended/${sessionId}`,
-        { userId, finalCode }
-      );
+      await handleUserEnded(sessionId, userId, finalCode);
     } catch (err) {
       console.error(`[end-session] Failed to save history for ${userId}: ${err.message}`);
     }
@@ -178,10 +176,7 @@ editorNs.on('connection', async (socket) => {
       // Snapshot and save this user's history
       const finalCode = session.ydoc.getText('code').toString();
       try {
-        await axios.post(
-          `http://api-gateway:1234/internal/collab/user-ended/${sessionId}`,
-          { userId, finalCode }
-        );
+        await handleUserEnded(sessionId, userId, finalCode);
       } catch (err) {
         console.error(`[disconnect-timeout] Failed to save history for ${userId}: ${err.message}`);
       }
@@ -193,11 +188,9 @@ editorNs.on('connection', async (socket) => {
       if (session.connectedEditors.size === 0) {
         session.disconnectTimer = setTimeout(async () => {
           try {
-            await axios.post(
-              `http://api-gateway:1234/internal/collab/session-ended/${sessionId}`
-            );
+            await handleSessionEnded(sessionId);
           } catch (err) {
-            console.error(`[cleanup] Failed to notify session end: ${err.message}`);
+            console.error(`[cleanup] Failed to clean up session: ${err.message}`);
           }
           sessions.delete(sessionId);
           console.log(`[cleanup] Session ${sessionId} cleaned up`);
@@ -242,6 +235,127 @@ chatNs.on('connection', async (socket) => {
 
     chatNs.to(sessionId).emit('receive-message', message);
   });
+});
+
+// ==========================================
+// SESSION LIFECYCLE HELPERS (previously in api-gateway)
+// ==========================================
+
+async function handleUserEnded(sessionId, userId, finalCode) {
+  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  if (!raw) return;
+  const meta = JSON.parse(raw);
+  const payload = {
+    ...meta,
+    sessionId,
+    finalCode,
+    endedAt: Date.now() / 1000,
+    submittedBy: userId
+  };
+  await axios.post('http://history-service:6770/history', payload);
+  await redisClient.del(`active_session:${userId}`);
+  await redisClient.set(`session:${sessionId}:saved:${userId}`, '1', { EX: 7200 });
+}
+
+async function handleSessionEnded(sessionId) {
+  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  if (!raw) return; // already cleaned up
+  const meta = JSON.parse(raw);
+  const finalCode = (await redisClient.get(`session:${sessionId}:finalCode`)) || '';
+  for (const key of ['user1_id', 'user2_id']) {
+    const uid = meta[key];
+    const saved = await redisClient.get(`session:${sessionId}:saved:${uid}`);
+    if (!saved) {
+      const payload = {
+        ...meta,
+        sessionId,
+        finalCode,
+        endedAt: Date.now() / 1000,
+        submittedBy: uid
+      };
+      await axios.post('http://history-service:6770/history', payload);
+    }
+  }
+  await redisClient.del(
+    `session:${sessionId}:meta`,
+    `session:${sessionId}:finalCode`,
+    `session:${sessionId}:ydoc`,
+    `session:${sessionId}:chat`,
+    `session:${sessionId}:saved:${meta.user1_id}`,
+    `session:${sessionId}:saved:${meta.user2_id}`,
+    `active_session:${meta.user1_id}`,
+    `active_session:${meta.user2_id}`
+  );
+}
+
+// ==========================================
+// COLLAB REST ENDPOINTS (previously in api-gateway)
+// ==========================================
+
+app.get('/collab/session/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  const uid = req.headers['x-user-id'];
+  if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
+
+  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  if (!raw) return res.status(404).json({ detail: 'Session not found' });
+
+  const meta = JSON.parse(raw);
+  if (![meta.user1_id, meta.user2_id].includes(uid)) {
+    return res.status(403).json({ detail: 'Not a member of this session' });
+  }
+  res.json({ ...meta, sessionId });
+});
+
+app.get('/collab/active-session', async (req, res) => {
+  const uid = req.headers['x-user-id'];
+  if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
+
+  const sessionId = await redisClient.get(`active_session:${uid}`);
+  if (!sessionId) return res.json({ sessionId: null });
+
+  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  if (!raw) {
+    await redisClient.del(`active_session:${uid}`);
+    return res.json({ sessionId: null });
+  }
+  res.json({ sessionId });
+});
+
+app.post('/collab/join', async (req, res) => {
+  const uid = req.headers['x-user-id'];
+  if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
+
+  const { sessionId } = req.body;
+  if (!sessionId) return res.status(400).json({ detail: 'sessionId required' });
+
+  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  if (!raw) return res.status(404).json({ detail: 'Session not found' });
+
+  const meta = JSON.parse(raw);
+  if (![meta.user1_id, meta.user2_id].includes(uid)) {
+    return res.status(403).json({ detail: 'Not a member of this session' });
+  }
+
+  const ticket = require('crypto').randomUUID();
+  await redisClient.set(`ticket:${ticket}`, JSON.stringify({ uid, sessionId }), { EX: 60 });
+  res.json({ ticket });
+});
+
+app.post('/collab/end-session/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  const uid = req.headers['x-user-id'];
+  if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
+
+  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  if (!raw) return res.status(404).json({ detail: 'Session not found' });
+
+  const meta = JSON.parse(raw);
+  if (![meta.user1_id, meta.user2_id].includes(uid)) {
+    return res.status(403).json({ detail: 'Not a member of this session' });
+  }
+  await redisClient.del(`active_session:${uid}`);
+  res.json({ detail: 'Active session cleared' });
 });
 
 const PORT = process.env.PORT || 4000;

@@ -165,44 +165,37 @@ Remove a question from the repository.
 ---
 
 ## 3. Matching Service
-**Base URL:** `http://matching-service:6769`  
-**Status:** Currently simulated in the frontend. Planned as a standalone service.
-**Purpose:** A generic matching engine that pairs two entities based on shared requirements. It is stateless regarding sessions; it simply notifies an orchestrator via Redis Pub/Sub when a match is successfully made.
+**Base URL:** `http://matching-service:6769`
+**Purpose:** Pairs two users based on overlapping topic and difficulty preferences. Publishes match events via Redis Pub/Sub. Also owns the SSE stream and session creation logic.
 
-#### `POST /find-pair`
-Enqueue an entity to be matched. The engine looks for another entity where at least one value in `criteria_1_options` and one value in `criteria_2_options` overlap.
+#### `POST /matching/find-pair`
+Enqueue a user to be matched.
+- **Headers:**
+  - `X-User-Id`: (Injected by API Gateway)
 - **Request Body:**
   ```json
   {
-    "entity_id": "string",
-    "criteria_1_options": [1, 5, 10],
-    "criteria_2_options": [2, 3]
+    "topic_options": ["Array", "String"],
+    "difficulty_options": ["Easy", "Medium"]
   }
   ```
 - **Responses:**
-  - `202 Accepted`: Entity successfully enqueued.
-  - `400 Bad Request`: Entity already in queue or invalid input.
+  - `202 Accepted`: User successfully enqueued or match found immediately.
+  - `400 Bad Request`: User already in queue.
 
-#### `DELETE /cancel-pair/{entity_id}`
-Remove an entity from the matching queue.
+#### `DELETE /matching/cancel-pair`
+Remove a user from the matching queue.
+- **Headers:**
+  - `X-User-Id`: (Injected by API Gateway)
 - **Responses:**
   - `200 OK`: Successfully removed from queue.
-
----
-
-## 4. Collaboration Service
-**Base URL:** `http://collab-service:4000`
-**Purpose:** Real-time collaborative code editing (Yjs CRDT) and chat over Socket.IO. Ticket-based authentication — each connection requires a one-time ticket obtained from the API Gateway.
-
-### API Gateway Endpoints (Collab-related)
-
-These endpoints live in the API Gateway but serve the collaboration flow.
+  - `404 Not Found`: User was not in the queue.
 
 #### `GET /matching/events`
-Subscribe to Server-Sent Events for match notifications.
+Subscribe to Server-Sent Events for match notifications. The API Gateway proxies this as a streaming response.
 - **Headers:**
   - `Authorization`: (Required) `Bearer <firebase_id_token>`
-- **Response:** `text/event-stream` (uses SSE `event:` field for event type)
+- **Response:** `text/event-stream`
   ```
   event: connected
   data: {}
@@ -213,6 +206,17 @@ Subscribe to Server-Sent Events for match notifications.
   event: timeout
   data: {}
   ```
+- **Notes:** When a match is found, the matching service runs a distributed leader election (Redis SETNX) to create the session atomically. The session metadata and active-session pointers are written to `redis-sessions`.
+
+---
+
+## 4. Collaboration Service
+**Base URL:** `http://collab-service:4000`
+**Purpose:** Real-time collaborative code editing (Yjs CRDT) and chat over Socket.IO. Also serves REST endpoints for session management. Ticket-based authentication — each WebSocket connection requires a one-time ticket obtained via `POST /collab/join`.
+
+### REST Endpoints
+
+These REST endpoints are served by the collaboration service and proxied through the API Gateway (auth injected as `X-User-Id`).
 
 #### `GET /collab/session/{sessionId}`
 Retrieve session metadata. Only accessible by session members.
@@ -234,6 +238,13 @@ Retrieve session metadata. Only accessible by session members.
   - `403 Forbidden`: Not a member of this session.
   - `404 Not Found`: Session does not exist or has expired.
 
+#### `GET /collab/active-session`
+Get the caller's currently active session ID, if any.
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Responses:**
+  - `200 OK`: `{"sessionId": "uuid"}` or `{"sessionId": null}`
+
 #### `POST /collab/join`
 Issue a one-time WebSocket ticket. Tickets expire after 60 seconds and are single-use. Get one ticket per namespace connection (editor + chat = 2 tickets).
 - **Headers:**
@@ -247,6 +258,15 @@ Issue a one-time WebSocket ticket. Tickets expire after 60 seconds and are singl
 - **Responses:**
   - `200 OK`: `{"ticket": "one-time-UUID"}`
   - `400 Bad Request`: Missing sessionId.
+  - `403 Forbidden`: Not a member of this session.
+  - `404 Not Found`: Session does not exist.
+
+#### `POST /collab/end-session/{sessionId}`
+Clear the caller's active-session pointer in Redis. Call this after the user navigates away from the collaboration page.
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Responses:**
+  - `200 OK`: `{"detail": "Active session cleared"}`
   - `403 Forbidden`: Not a member of this session.
   - `404 Not Found`: Session does not exist.
 
@@ -356,7 +376,7 @@ Each user gets their own history entry with the code snapshot from when **they**
 
 ## 5. History Service
 **Base URL:** `http://history-service:6770`
-**Purpose:** Persists completed session records to Firestore. Called internally by the API Gateway after a session ends (not exposed to frontend directly).
+**Purpose:** Persists completed session records to Firestore. Called internally by the Collaboration Service (`handleUserEnded` / `handleSessionEnded`) after a session ends — not exposed to the frontend directly.
 
 ### Endpoints
 

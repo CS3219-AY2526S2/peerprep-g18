@@ -2,48 +2,48 @@
 
 **Owner:** Lee De En (M4 Collaboration)
 **Scope:** `collaboration-service/`, `api-gateway/`, `nginx.conf`, `docker-compose.yml`, `history-service/` (new), `docs/API.md`
-**Does NOT touch:** user-service, matching-service, question-service internals
-**Status:** All phases complete (2026-03-21)
+**Does NOT touch:** user-service, question-service internals
+**Status:** All phases complete (2026-03-30, including Phase 7 gateway cleanup)
 
 Each phase below is a self-contained, deployable, testable unit.
 
 ---
 
-## Full Architecture
+## Full Architecture (current, post-Phase 7)
 
 ```
-Frontend          Nginx            API Gateway         Collab Service   History Service
-   |                |                   |                    |                |
-   |--GET /matching/events (SSE)------->|                    |                |
-   |                |     subscribe match_events:{uid} on Redis               |
-   |                |     SETNX leader election + question fetch              |
-   |<--SSE: event:match_found {sessionId, questionId}        |                |
-   |                |                   |                    |                |
-   |--POST /api/collab/join (JWT)------->|                   |                |
-   |<--{ ticket: UUID }                 |                    |                |
-   |                |                   |                    |                |
-   |--WS /socket.io/?ticket=UUID------->|                    |                |
-   |                |--proxy upgrade (no auth_request)------>|                |
-   |                |                   |    GETDEL ticket:{UUID} from Redis  |
-   |                |                   |    attach uid+sessionId to socket   |
-   |<===================== Yjs editor + chat over Socket.IO ================>|
-   |                |                   |                    |                |
-   |  [User A ends or disconnects 30s]  |                    |                |
-   |                |                   |    snapshot code    |                |
-   |                |                   |    POST /internal/collab/user-ended |
-   |                |                   |<-------------------|                |
-   |                |                   |   save User A's history ------------>|
-   |                |                   |   SET saved:{uid_A} flag            |
-   |                |                   |                    |                |
-   |                |                   |    emit 'partner-ended' to User B   |
-   |  [User B prompted: Continue/End]   |                    |                |
-   |  [User B continues solo editing]   |                    |                |
-   |  [User B ends → same flow]         |                    |                |
-   |                |                   |                    |                |
-   |  [all disconnected → cleanup]      |    POST /internal/collab/session-ended
-   |                |                   |<-------------------|                |
-   |                |                   |   save history for unsaved users -->|
-   |                |                   |   DEL all session:{id}:* keys       |
+Frontend          Nginx          API Gateway      Matching Svc    Collab Service   History Service
+   |                |                |                 |                |                |
+   |--GET /matching/events (JWT)---->|                 |                |                |
+   |                |     Verify JWT, inject X-User-Id |                |                |
+   |                |     SSE stream proxy ----------->|                |                |
+   |                |                |  SUBSCRIBE match_events:{uid}   |                |
+   |                |                |  SETNX leader election          |                |
+   |                |                |  GET question from QS           |                |
+   |<--SSE: event:match_found {sessionId, questionId} (streamed through gateway)         |
+   |                |                |                 |                |                |
+   |--POST /api/collab/join (JWT)--->|                 |                |                |
+   |                |     Verify JWT, inject X-User-Id |                |                |
+   |                |     proxy ------------------------------------->  |                |
+   |                |                |                 |  SET ticket:{UUID} in Redis     |
+   |<--{ ticket: UUID }              |                 |                |                |
+   |                |                |                 |                |                |
+   |--WS /socket.io/?ticket=UUID---->|                 |                |                |
+   |                |--proxy upgrade (plain passthrough)------------->  |                |
+   |                |                |                 |  GETDEL ticket from Redis       |
+   |<===================== Yjs editor + chat over Socket.IO ========================>   |
+   |                |                |                 |                |                |
+   |  [User A ends or disconnects 30s]                 |                |                |
+   |                |                |                 |  handleUserEnded() (in-process) |
+   |                |                |                 |                |--POST /history->|
+   |                |                |                 |  SET saved:{uid_A} flag         |
+   |                |                |                 |  emit 'partner-ended' to User B |
+   |  [User B prompted: Continue/End]                  |                |                |
+   |  [User B ends → same flow]                        |                |                |
+   |  [all disconnected → 5s cleanup]                  |                |                |
+   |                |                |                 |  handleSessionEnded() (in-process)
+   |                |                |                 |                |--POST /history->|
+   |                |                |                 |  DEL all session:{id}:* keys    |
 ```
 
 ---
@@ -430,6 +430,55 @@ Document ID: `{sessionId}_{submittedBy}` (each user gets their own entry)
 
 ---
 
+## Phase 7 — Gateway Cleanup: Move Business Logic to Respective Services
+**Status: COMPLETE (2026-03-30)**
+
+**Deliverable:** API Gateway is a pure auth-proxy. All collaboration and matching domain logic lives in their respective services.
+
+### What moved
+
+**To `matching-service`:**
+- `GET /matching/events` SSE endpoint (was inline in gateway; now matching-service owns it)
+- `create_or_join_session()` leader-election helper (same)
+- New dependency: `redis-sessions` connection added to matching-service
+
+**To `collab-service`:**
+- `GET /collab/session/{sessionId}` REST route
+- `GET /collab/active-session` REST route
+- `POST /collab/join` REST route (ticket issuance)
+- `POST /collab/end-session/{sessionId}` REST route
+- `handleUserEnded(sessionId, userId, finalCode)` — in-process function replacing `POST /internal/collab/user-ended` HTTP call
+- `handleSessionEnded(sessionId)` — in-process function replacing `POST /internal/collab/session-ended` HTTP call
+- `GET /internal/validate` was already dead (collab-service used Redis directly); just deleted.
+
+**Removed from `api-gateway`:**
+- 9 inline route handlers
+- `redis_sessions` and `redis_events` global connections
+- All unused imports (`asyncio`, `json`, `uuid`, `time`)
+
+**Added to `api-gateway`:**
+- `"collab": "http://collab-service:4000"` in the SERVICES routing table
+- Dedicated SSE streaming proxy for `GET /matching/events` (the buffered catch-all would kill SSE streams; needs `StreamingResponse` + `http_client.stream()` with `timeout=None`)
+
+### Files changed
+- `backend/api-gateway/main.py` — stripped to ~80 lines
+- `backend/matching-service/app/database.py` — added `redis_sessions`
+- `backend/matching-service/app/main.py` — startup/shutdown for new Redis connection
+- `backend/matching-service/requirements.txt` — added `httpx>=0.25.0`
+- `backend/matching-service/app/routers/match.py` — added SSE endpoint + session creation
+- `backend/collaboration-service/server.js` — added `express.json()`, 4 REST routes, 2 helper functions, replaced 3 axios calls
+- `backend/docker-compose.yml` — matching-service gains `redis-sessions`; collab-service gains `history-service`; api-gateway loses both Redis deps
+
+### Key decisions
+| Decision | Reason |
+|---|---|
+| SSE stays proxied through gateway | Auth (Firebase JWT) is centralized in gateway; matching-service trusts `X-User-Id` header |
+| Session creation moves to matching-service | Triggered by match events in matching domain; avoids cross-service HTTP call |
+| `handleUserEnded`/`handleSessionEnded` become in-process | Eliminates unnecessary HTTP round-trips from collab-service to api-gateway back to collab-service's own Redis |
+| CORS stripping in gateway proxy | collab-service `cors()` middleware adds `*`; nginx adds `$http_origin`; gateway strips upstream CORS headers to prevent duplicates |
+
+---
+
 ## Summary Table
 
 | Phase | What shipped | Status |
@@ -441,6 +490,7 @@ Document ID: `{sessionId}_{submittedBy}` (each user gets their own entry)
 | 4 | History service + session cleanup | COMPLETE |
 | 5 | API documentation in `docs/API.md` | COMPLETE |
 | 6 | Graceful session end + per-user history | COMPLETE |
+| 7 | Gateway cleanup — move logic to respective services | COMPLETE |
 
 ## Key Context
 

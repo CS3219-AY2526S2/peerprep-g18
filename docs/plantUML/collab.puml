@@ -6,10 +6,10 @@ actor "User (Browser)" as User
 participant "Frontend" as FE
 box "Infrastructure" #f9f9f9
     participant "Nginx" as Nginx
-    participant "API Gateway" as GW
+    participant "API Gateway\n(Auth Proxy)" as GW
     database "Redis\n(Sessions)" as Redis
 end box
-participant "Collab Service\n(Socket.IO)" as Collab
+participant "Collab Service\n(Socket.IO + REST)" as Collab
 
 == Phase 1: Ticket Acquisition ==
 
@@ -17,13 +17,17 @@ User -> FE: Wants to join session
 FE -> Nginx: POST /api/collab/join\n{sessionId}\nAuth: [Firebase Token]
 Nginx -> GW: Forward (strip /api)
 activate GW
-GW -> GW: Validate Firebase Token\n(extract uid)
-GW -> Redis: GET session:{id}:meta
-Redis --> GW: {user1_id, user2_id, ...}
-GW -> GW: Check uid in [user1_id, user2_id]
-GW -> Redis: SET ticket:{UUID}\n{uid, sessionId} EX 60
-GW --> FE: 200 OK { ticket: "UUID" }
+GW -> GW: Validate Firebase Token\n(extract uid, inject X-User-Id)
+GW -> Collab: POST /collab/join\n(X-User-Id: uid, body: {sessionId})
 deactivate GW
+activate Collab
+Collab -> Redis: GET session:{id}:meta
+Redis --> Collab: {user1_id, user2_id, ...}
+Collab -> Collab: Check uid in [user1_id, user2_id]
+Collab -> Redis: SET ticket:{UUID}\n{uid, sessionId} EX 60
+Collab --> GW: 200 OK { ticket: "UUID" }
+deactivate Collab
+GW --> FE: 200 OK { ticket: "UUID" }
 
 note over FE
   Frontend acquires **two tickets** — one for
@@ -77,6 +81,8 @@ deactivate Collab
 
 note over Collab, Redis
   Design notes:
+  - Ticket issuance: POST /collab/join handled by collab-service
+    (proxied through API Gateway for auth injection).
   - Ticket validation happens in collab service
     middleware, not via nginx auth_request
     (auth_request interferes with WebSocket upgrades).

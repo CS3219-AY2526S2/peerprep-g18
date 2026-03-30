@@ -1,12 +1,93 @@
 import json
 import itertools
 import time
+import uuid
+import asyncio
 import redis.exceptions
+import httpx
 from fastapi import APIRouter, HTTPException, Header
+from fastapi.responses import StreamingResponse
 from app.schemas import FindPairRequest, MatchResponse
 from app import database
 
 router = APIRouter()
+
+
+async def create_or_join_session(match_data: dict, uid: str) -> dict:
+    uid_A, uid_B = match_data["user1_id"], match_data["user2_id"]
+    match_id = match_data.get(
+        "match_id",
+        f"{':'.join(sorted([uid_A, uid_B]))}:{match_data.get('topic', '')}:{match_data.get('difficulty', '')}:{match_data.get('matched_at', '')}"
+    )
+    lock_key = f"lock:match:{match_id}"
+    session_id = str(uuid.uuid4())
+
+    is_leader = await database.redis_sessions.setnx(lock_key, session_id)
+    await database.redis_sessions.expire(lock_key, 7200)
+
+    if is_leader:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "http://question-service:6768/question/",
+                params={"topic": match_data["topic"], "difficulty": match_data["difficulty"]}
+            )
+        question_id = r.json()["question_id"]
+        meta = {
+            "user1_id": uid_A, "user2_id": uid_B,
+            "questionId": question_id,
+            "topic": match_data["topic"], "difficulty": match_data["difficulty"],
+            "startedAt": time.time()
+        }
+        await database.redis_sessions.set(f"session:{session_id}:meta", json.dumps(meta), ex=7200)
+        await database.redis_sessions.set(f"active_session:{uid_A}", session_id, ex=7200)
+        await database.redis_sessions.set(f"active_session:{uid_B}", session_id, ex=7200)
+        return {"sessionId": session_id, "questionId": question_id}
+    else:
+        winning_id = await database.redis_sessions.get(lock_key)
+        for _ in range(50):
+            raw = await database.redis_sessions.get(f"session:{winning_id}:meta")
+            if raw:
+                meta = json.loads(raw)
+                return {"sessionId": winning_id, "questionId": meta["questionId"]}
+            await asyncio.sleep(0.2)
+        raise HTTPException(503, "Session init timeout")
+
+
+@router.get("/events")
+async def match_events(x_user_id: str = Header(...)):
+    uid = x_user_id
+
+    async def stream():
+        pubsub = database.redis_pubsub.pubsub()
+        await pubsub.subscribe(f"match_events:{uid}")
+        try:
+            yield 'event: connected\ndata: {}\n\n'
+            async for msg in pubsub.listen():
+                if msg["type"] != "message":
+                    continue
+                try:
+                    data = json.loads(msg["data"])
+                except Exception:
+                    continue
+                if data["event"] == "match":
+                    try:
+                        result = await create_or_join_session(data, uid)
+                        yield f"event: match_found\ndata: {json.dumps(result)}\n\n"
+                    except Exception as e:
+                        print(f"Session creation error for {uid}: {e}")
+                        yield f"event: error\ndata: {json.dumps({'message': 'Session creation failed'})}\n\n"
+                elif data["event"] == "timeout":
+                    yield 'event: timeout\ndata: {}\n\n'
+                    break
+        finally:
+            await pubsub.unsubscribe(f"match_events:{uid}")
+            await pubsub.aclose()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 #def generate_queue_name(topic: str, difficulty: str) -> str:
 #    return f"queue:{topic.lower().replace(' ', '_')}:{difficulty.lower()}"
