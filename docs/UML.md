@@ -38,6 +38,42 @@ This diagram should show the primary “happy path” from login → selecting t
 
 ---
 
+### 2.2.2 Collaboration flow — ticket acquisition and WebSocket connection
+
+Sequence diagram showing how a user obtains a one-time ticket from the API Gateway and connects to the Collaboration Service via Socket.IO.
+
+**Source:** [`plantUML/collab.puml`](plantUML/collab.puml)
+
+Key points:
+- Ticket validation is done in the collab service's Socket.IO middleware, not via nginx `auth_request`.
+- Each namespace connection (`/editor`, `/chat`) requires its own ticket.
+
+### 2.2.3 Match to collaboration — end-to-end flow
+
+Sequence diagram showing the full flow from matching two users to establishing a collaborative coding session.
+
+**Source:** [`plantUML/matchToCollab.puml`](plantUML/matchToCollab.puml)
+
+Key points:
+- Matching service publishes to Redis Pub/Sub; API Gateway subscribes via SSE.
+- Leader election (`SETNX`) ensures only one session is created per match.
+- `/editor` and `/chat` are separate Socket.IO namespaces, each requiring its own ticket.
+- Yjs CRDT updates are persisted to Redis as base64; plaintext `finalCode` snapshot maintained separately.
+
+### 2.2.4 Collaboration to History — session end & cleanup
+
+Sequence diagram showing the session cleanup flow when both users disconnect.
+
+**Source:** [`plantUML/collabToHistory.puml`](plantUML/collabToHistory.puml)
+
+Key points:
+- 30-second grace period after both users disconnect before cleanup triggers.
+- Collab service notifies API Gateway, which reads session metadata and final code from Redis.
+- API Gateway saves the session record to Firestore via History Service, then deletes all Redis keys.
+
+---
+
 ## Change Log (Optional)
 
 - 2026-02-23: Initial diagram drafted from D1 phase.
+- 2026-03-20: Added collaboration flow diagrams (collab.puml, matchToCollab.puml, collabToHistory.puml). Updated matchToCollab.puml to reflect unified Collab Service and correct event names.

@@ -5,7 +5,7 @@
 
 import os
 from fastapi import FastAPI, Request, HTTPException, Response
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import httpx
 import firebase_admin
 from firebase_admin import credentials, auth
@@ -17,9 +17,12 @@ app = FastAPI(title="PeerPrep API Gateway")
 
 http_client = httpx.AsyncClient()
 
+@app.on_event("startup")
+async def startup():
+    pass
+
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Clean up the httpx client when the application shuts down."""
     await http_client.aclose()
 
 # app.add_middleware(
@@ -34,13 +37,12 @@ async def shutdown_event():
 # MICROSERVICE ROUTING TABLE
 # ==========================================
 # Maps the first part of the URL path to the internal microservice address.
-# When running locally, use localhost. In Docker Compose later, use container names.
 SERVICES = {
-    "users": "http://user-service:6767",
-    "admin": "http://user-service:6767",
+    "users":    "http://user-service:6767",
+    "admin":    "http://user-service:6767",
     "question": "http://question-service:6768",
-    # "matching": "http://matching-service:6769",
-    "collab": "http://collab-service:4000",
+    "matching": "http://matching-service:6769",
+    "collab":   "http://collab-service:4000",
 }
 
 # Routes that DO NOT require authentication (e.g., login, registration)
@@ -63,21 +65,54 @@ async def verify_token(request: Request):
         print(f"❌ FIREBASE ERROR: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Auth Failed: {str(e)}")
 
+# ==========================================
+# SSE PROXY — must be before the catch-all
+# ==========================================
+# The catch-all buffers the full response body, which breaks SSE streaming.
+# This dedicated route streams the response from matching-service.
+
+@app.get("/matching/events")
+async def proxy_match_events(request: Request):
+    decoded = await verify_token(request)
+    uid = decoded["uid"]
+
+    forwarded_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in ["host", "authorization"]
+    }
+    forwarded_headers["X-User-Id"] = uid
+
+    async def stream_sse():
+        async with http_client.stream(
+            "GET",
+            "http://matching-service:6769/matching/events",
+            headers=forwarded_headers,
+            timeout=None
+        ) as response:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+
+    return StreamingResponse(
+        stream_sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def gateway_proxy(request: Request, path: str):
     """
-    The core proxy function. Catches all requests, authenticates them, 
+    The core proxy function. Catches all requests, authenticates them,
     and forwards them to the correct microservice.
     """
     path_parts = path.split("/")
     service_prefix = path_parts[0] if path_parts else ""
-    
+
     if service_prefix not in SERVICES:
         raise HTTPException(status_code=404, detail="Service not found")
-        
+
     target_base_url = SERVICES[service_prefix]
     target_url = f"{target_base_url}/{path}"
-    
+
     if request.url.query:
         target_url += f"?{request.url.query}"
 
@@ -95,13 +130,13 @@ async def gateway_proxy(request: Request, path: str):
             user_headers["X-User-Role"] = decoded_token.get("role")
 
     forwarded_headers = {
-        k: v for k, v in request.headers.items() 
+        k: v for k, v in request.headers.items()
         if k.lower() not in ["host", "authorization"]
     }
     forwarded_headers.update(user_headers)
 
     body = await request.body()
-    
+
     try:
         target_response = await http_client.request(
             method=request.method,
@@ -113,10 +148,23 @@ async def gateway_proxy(request: Request, path: str):
     except httpx.RequestError as e:
         raise HTTPException(status_code=503, detail=f"Target service unavailable: {str(e)}")
 
+    # Strip CORS headers from upstream — nginx owns CORS for /api/ requests.
+    # Forwarding upstream CORS headers alongside nginx's would produce duplicates.
+    cors_headers = {
+        "access-control-allow-origin",
+        "access-control-allow-methods",
+        "access-control-allow-headers",
+        "access-control-allow-credentials",
+        "access-control-max-age",
+    }
+    filtered_headers = {
+        k: v for k, v in target_response.headers.items()
+        if k.lower() not in cors_headers
+    }
     return Response(
         content=target_response.content,
         status_code=target_response.status_code,
-        headers=dict(target_response.headers)
+        headers=filtered_headers
     )
 
 if __name__ == "__main__":

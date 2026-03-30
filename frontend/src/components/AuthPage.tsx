@@ -1,15 +1,14 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mail, Lock, User, Eye, EyeOff, CheckCircle, Loader2 } from 'lucide-react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
 import { GATEWAY_URL } from '../constants';
+import { useUser } from '../contexts/UserContext';
 
-interface AuthPageProps {
-  onBack: () => void;
-  onLoginSuccess: (uid: string, token: string) => void;
-}
-
-export function AuthPage({ onBack, onLoginSuccess }: AuthPageProps) {
+export function AuthPage() {
+  const navigate = useNavigate();
+  const { handleLoginSuccess } = useUser();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -67,32 +66,39 @@ export function AuthPage({ onBack, onLoginSuccess }: AuthPageProps) {
       setIsLoading(true);
       try {
         if (isLogin) {
-          // --- 1. LOGIN FLOW ---
           let loginEmail = formData.email;
 
           if (!loginEmail.includes('@')) {
             const lookupRes = await fetch(`${GATEWAY_URL}/users/lookup/${loginEmail}`);
             if (!lookupRes.ok) throw new Error('Username not found');
             const data = await lookupRes.json();
-
             loginEmail = data.email;
           }
 
           const userCredential = await signInWithEmailAndPassword(auth, loginEmail, formData.password);
           const firebaseUser = userCredential.user;
 
-          // EMAIL VERIFICATION CHECK
           if (!firebaseUser.emailVerified) {
             await auth.signOut();
             throw new Error('Please verify your email before logging in. Check your inbox!');
           }
 
-          // Force a fresh token so custom claims (role) are included and gateway verification succeeds
           const token = await firebaseUser.getIdToken(true);
-          onLoginSuccess(firebaseUser.uid, token);
+          await handleLoginSuccess(firebaseUser.uid, token);
+
+          // Fetch profile to check admin
+          const res = await fetch(`${GATEWAY_URL}/users/${firebaseUser.uid}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) {
+            const profileData = await res.json();
+            const isAdmin = profileData.role?.toLowerCase() === 'admin' || profileData.username === 'Root';
+            navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
+          } else {
+            navigate('/dashboard', { replace: true });
+          }
 
         } else {
-          // --- 2. REGISTRATION FLOW ---
           const response = await fetch(`${GATEWAY_URL}/users`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -122,7 +128,6 @@ export function AuthPage({ onBack, onLoginSuccess }: AuthPageProps) {
     }
   };
 
-  // --- SUCCESS SCREEN FOR REGISTRATION ---
   if (registrationSuccess) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
@@ -156,12 +161,11 @@ export function AuthPage({ onBack, onLoginSuccess }: AuthPageProps) {
     );
   }
 
-  // --- MAIN FORM SCREEN ---
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
       <div className="max-w-md w-full">
         <button
-          onClick={onBack}
+          onClick={() => navigate('/')}
           className="mb-8 flex items-center gap-2 text-[#4A4563] hover:text-[#5A5573]"
         >
           <ArrowLeft className="w-5 h-5" />
