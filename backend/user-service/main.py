@@ -276,7 +276,6 @@ def perform_delete(user_id: str):
 # --- GET ALL USERS ---
 @app.get("/admin/users")
 def get_all_users(x_user_role: str = Header(None)):
-    # 🔴 FIX: Allow both Admin and Root to view the dashboard
     role_check = x_user_role.strip().lower() if x_user_role else ""
     if role_check not in ["admin", "root"]:
         raise HTTPException(status_code=403, detail="Admin access required")
