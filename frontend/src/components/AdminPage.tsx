@@ -1,8 +1,19 @@
+/**
+ * AI USE DECLARATION:
+ * This page utilizes AI generated boilerplate for Tailwind CSS styling 
+ * and React state update patterns. Core business logic, API integration 
+ * sequences, and input validation rules were manually architected and 
+ * verified to ensure system integrity.
+ * All AI-generated snippets have been manually reviewed, refactored for 
+ * PeerPrep's specific architecture, and verified.
+ */
+
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut } from 'lucide-react';
+import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut, ChevronRight } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
 import { DynamicArrayInput } from './ui/DynamicArrayInput';
+import { QuestionModal } from './ui/QuestionModal'
 import { useUser } from '../contexts/UserContext';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
@@ -11,6 +22,7 @@ import 'katex/dist/katex.min.css';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 import { dracula } from '@uiw/codemirror-theme-dracula';
+import { useRef } from 'react';
 
 type AdminTab = 'users' | 'questions';
 
@@ -28,26 +40,67 @@ export function AdminPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   
-  // Question Management State
-  const [isEditing, setIsEditing] = useState(false); 
-  const [backupQuestion, setBackupQuestion] = useState<any>(null);
 
   // Question State
   const [searchId, setSearchId] = useState('');
   const [managedQuestion, setManagedQuestion] = useState<any>(null);
-  const [isAddingQuestion, setIsAddingQuestion] = useState(false);
-  
+  const [filterTopic, setFilterTopic] = useState('All');
+  const [filterDifficulty, setFilterDifficulty] = useState('All');
+  const [availableTopics, setAvailableTopics] = useState<string[]>([]);
+  const [availableDifficulties, setAvailableDifficulties] = useState<string[]>([]);
+  // const [isAddingQuestion, setIsAddingQuestion] = useState(false);
+
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const questionsPerPage = 10;
+  const [activeSearchMode, setActiveSearchMode] = useState<'none' | 'id' | 'criteria'>('none');
+
+  const isFiltered =
+    activeSearchMode !== 'none' ||
+    searchId.trim() !== '' ||
+    filterTopic !== 'All' ||
+    filterDifficulty !== 'All';
+
   // New Question Form State
-  const [newQuestion, setNewQuestion] = useState({
-    title: '',
-    topic: 'Arrays',
-    difficulty: 'Easy',
-    statement: '',
-    template: '',
-    examples: [''],
-    constraints: [''],
-    hints: ['']
-  });
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    mode: 'add' | 'edit';
+    data?: any;
+  }>({ isOpen: false, mode: 'add' });
+
+  const fetchQuestions = async (page: number, topic = 'All', difficulty = 'All') => {
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('peerprep_token');
+
+      let url = `${GATEWAY_URL}/question/all?page=${page}&limit=10`;
+      if (topic !== 'All') url += `&topic=${encodeURIComponent(topic)}`;
+      if (difficulty !== 'All') url += `&difficulty=${difficulty}`;
+
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const data = await response.json();
+      setQuestions(data.questions);
+      setTotalPages(data.total_pages);
+      setCurrentPage(data.current_page);
+    } catch (err: any) {
+      setError("Failed to filter questions");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Refetch whenever the page changes
+  useEffect(() => {
+    if (activeTab === 'questions') {
+      if (!searchId) {
+        fetchQuestions(currentPage, filterTopic, filterDifficulty);
+      }
+    }
+  }, [activeTab, currentPage]);
 
   useEffect(() => {
     if (activeTab === 'users') {
@@ -75,105 +128,177 @@ export function AdminPage() {
     }
   };
 
-  const handleLookupQuestion = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!searchId.trim()) return;
+  const handleModalSuccess = async (updatedData?: any) => {
+  if (!updatedData) return;
 
-    if (isEditing) {
-      const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
-      if (hasChanges && !window.confirm("Discard changes to the current question and search for a new one?")) {
-        return;
-      }
+  if (modalConfig.mode === 'edit') {
+    // For Edits, we keep the search criteria because the admin 
+    // likely wants to stay in their filtered view. It may show some stale value 
+    // (ie. the new update might be out of place from the current search, 
+    // but it just brings more convinience for the admin to be in this way)
+    setManagedQuestion(updatedData);
+    setQuestions(prev =>
+      prev.map(q =>
+        q.question_id.toString() === updatedData.question_id.toString()
+          ? { ...q, title: updatedData.title, topic: updatedData.topic, difficulty: updatedData.difficulty }
+          : q
+      )
+    );
+  } else {
+    // For Adds, we reset the search state 
+    setSearchId('');
+    setFilterTopic('All');
+    setFilterDifficulty('All');
+    setActiveSearchMode('none'); 
+
+    if (currentPage === totalPages) {
+      await fetchQuestions(currentPage, 'All', 'All');
+    } else {
+      await fetchQuestions(1, 'All', 'All'); 
     }
+    setManagedQuestion(updatedData);
+  }
+  await refreshMetadata();
+};
 
-    setActionLoading('lookup-q');
-    setError('');
-    setManagedQuestion(null);
-
+  const fetchQuestionDetails = async (id: string) => {
+    setActionLoading(`fetching-${id}`);
     try {
       const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/question/${searchId}`, {
+      const response = await fetch(`${GATEWAY_URL}/question/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      
-      if (!response.ok) {
-        if (response.status === 404) throw new Error('Question not found');
-        throw new Error('Failed to fetch question');
-      }
-
+      if (!response.ok) throw new Error('Failed to fetch details');
       const data = await response.json();
       setManagedQuestion(data);
-      setIsEditing(false);
-      setBackupQuestion(null);
-    } catch (err: any) {
-      setError(err.message);
-      setManagedQuestion(null);
-      setIsEditing(false);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleStartEditing = () => {
-    setBackupQuestion({ ...managedQuestion }); // Clone current state
-    setIsEditing(true);
-  };
-
-  const handleCancelEditing = () => {
-    // Check if anything actually changed before asking
-    const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
-    
-    if (hasChanges) {
-      if (window.confirm("You have unsaved changes. Are you sure you want to discard them?")) {
-        setManagedQuestion(backupQuestion);
-        setIsEditing(false);
-      }
-    } else {
-      setIsEditing(false);
-    }
-  };
-
-  const handleUpdateQuestion = async () => {
-    if (!managedQuestion) return;
-    setActionLoading('update-q');
-    try {
-      const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/question/${managedQuestion.question_id}`, {
-        method: 'PUT',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(managedQuestion)
-      });
-
-      if (!response.ok) throw new Error('Failed to update question');
-      
-      alert('Question updated successfully!');
-      setIsEditing(false); // Return to preview mode
     } catch (err: any) {
       alert(err.message);
     } finally {
       setActionLoading(null);
     }
   };
-  const handleTabChange = (tab: AdminTab) => {
-    if (isEditing) {
-      const hasChanges = JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
-      if (hasChanges && !window.confirm("You have unsaved changes. Discard them?")) {
-        return; // Stay on current tab
-      }
+
+  const handleLookupQuestion = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!searchId.trim()) return;
+
+    // Clear Metadata Filters and previous managed question
+    setFilterTopic('All');
+    setFilterDifficulty('All');
+    setManagedQuestion(null);
+
+    setActionLoading('lookup-q');
+    try {
+      const token = localStorage.getItem('peerprep_token');
+      const response = await fetch(`${GATEWAY_URL}/question/${searchId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!response.ok) throw new Error('Question not found');
+      const data = await response.json();
+      setManagedQuestion(data);
+      setQuestions([data]);
+      setTotalPages(1); 
+      setCurrentPage(1);
+      setActiveSearchMode('id');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setActionLoading(null);
     }
-    // Reset states when moving away
-    setIsEditing(false);
+  };
+
+  const handleMetadataSearch = () => {
+    // Clear ID Search and previous managed question
+    setSearchId('');
+    setManagedQuestion(null);
+
+    // Perform the fetch
+    fetchQuestions(1, filterTopic, filterDifficulty);
+    if (filterTopic === 'All' && filterDifficulty === 'All') {
+      setActiveSearchMode('none');
+    } else {
+      setActiveSearchMode('criteria');
+    }
+  };
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    // Only scroll if a question was actually expanded (managedQuestion is not null)
+    if (managedQuestion && scrollRef.current) {
+      scrollRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start' // Aligns the top of the card to the top of the screen
+      });
+    }
+  }, [managedQuestion]);
+
+  
+
+  const fetchMetadata = async () => {
+    try {
+      const token = localStorage.getItem('peerprep_token');
+      const headers = { 'Authorization': `Bearer ${token}` };
+
+      const [topicsRes, diffRes] = await Promise.all([
+        fetch(`${GATEWAY_URL}/question/topics`, { headers }),
+        fetch(`${GATEWAY_URL}/question/difficulties`, { headers })
+      ]);
+
+      if (topicsRes.ok && diffRes.ok) {
+        const topics = await topicsRes.json();
+        const difficulties = await diffRes.json();
+        setAvailableTopics(topics);
+        setAvailableDifficulties(difficulties);
+      }
+    } catch (err) {
+      console.error("Metadata fetch failed", err);
+    }
+  };
+
+
+  useEffect(() => {
+    fetchMetadata();
+  }, []);
+
+  const refreshMetadata = async () => {
+    try {
+      const token = localStorage.getItem('peerprep_token');
+      const headers = { 'Authorization': `Bearer ${token}` };
+
+      const [topicsRes, diffRes] = await Promise.all([
+        fetch(`${GATEWAY_URL}/question/topics`, { headers }),
+        fetch(`${GATEWAY_URL}/question/difficulties`, { headers })
+      ]);
+
+      if (topicsRes.ok && diffRes.ok) {
+        setAvailableTopics(await topicsRes.json());
+        setAvailableDifficulties(await diffRes.json());
+      }
+    } catch (err) {
+      console.error("Metadata refresh failed", err);
+    }
+  };
+  
+  const handleTabChange = (tab: AdminTab) => {    
     setManagedQuestion(null); 
     setSearchId('');
     setActiveTab(tab);
   };
 
+  // Update your fetchQuestions call inside useEffect
+  useEffect(() => {
+    if (activeTab === 'questions') {
+      if (questions.length === 1 && totalPages === 1) return;
+      fetchQuestions(currentPage, filterTopic, filterDifficulty);
+    }
+  }, [activeTab, currentPage]); 
+
+
   const handleDeleteQuestion = async (questionId: string) => {
     if (!window.confirm('Are you sure you want to delete this question?')) return;
-    
+
     setActionLoading(`delete-q-${questionId}`);
     try {
       const token = localStorage.getItem('peerprep_token');
@@ -183,12 +308,23 @@ export function AdminPage() {
       });
 
       if (!response.ok) throw new Error('Failed to delete question');
-      
-      if (managedQuestion?.question_id === questionId) {
+
+      const updatedQuestions = questions.filter(q => q.question_id.toString() !== questionId.toString());
+      setQuestions(updatedQuestions);
+
+      if (managedQuestion?.question_id.toString() === questionId.toString()) {
         setManagedQuestion(null);
-        setSearchId('');
       }
+
+      // Logic for jumping back a page if the current one becomes empty
+      if (updatedQuestions.length === 0 && currentPage > 1) {
+        setCurrentPage(prev => prev - 1);
+      } else if (updatedQuestions.length === 0 && currentPage === 1) {
+        fetchQuestions(1);
+      }
+
       alert('Question deleted successfully');
+      await refreshMetadata(); // Refresh after successful delete
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -240,50 +376,6 @@ export function AdminPage() {
       setActionLoading(null);
     }
   };
-
-  const handleAddQuestion = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setActionLoading('add-question');
-    try {
-      const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/question/`, {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(newQuestion)
-      });
-
-      if (!response.ok) throw new Error('Failed to add question');
-      
-      setIsAddingQuestion(false);
-      setNewQuestion({
-        title: '', topic: 'Arrays', difficulty: 'Easy',
-        statement: '', template: '', examples: [''],
-        constraints: [''], hints: ['']
-      });
-      alert('Question added successfully!');
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  // Handle the case for unsaved changes when user tries to close the tab or navigate away through browser controls
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const hasChanges = isEditing && JSON.stringify(managedQuestion) !== JSON.stringify(backupQuestion);
-      if (hasChanges) {
-        e.preventDefault();
-        e.returnValue = ''; 
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isEditing, managedQuestion, backupQuestion]);
 
   return (
     <div className="min-h-screen p-6 bg-[#2D2942]">
@@ -390,335 +482,269 @@ export function AdminPage() {
           ) : (
             <>
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-white font-bold text-2xl">Question Management</h2>
+                <h2 className="text-white font-bold text-2xl">Question Bank</h2>
                 <button 
-                  onClick={() => setIsAddingQuestion(true)}
+                  onClick={() => setModalConfig({ isOpen: true, mode: 'add' })}
                   className="btn-secondary py-2 px-4 flex items-center gap-2"
                 >
                   <Plus className="w-5 h-5" />
                   Add New
                 </button>
               </div>
+                <div className="space-y-3 mb-8">
+                  {/* Choice 1: Search by ID */}
+                  <div className="space-y-3">
+                    <form onSubmit={handleLookupQuestion} className="flex gap-3">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Enter Question ID..."
+                          value={searchId}
+                          onChange={(e) => setSearchId(e.target.value)}
+                          className="input-field w-full pl-12"
+                        />
+                      </div>
+                      <button type="submit" className="btn-primary px-8">Search ID</button>
+                    </form>
+                  </div>
 
-              {/* Lookup Form */}
-              <form onSubmit={handleLookupQuestion} className="flex gap-3 mb-8">
-                <div className="relative flex-1">
-                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Enter Question ID (e.g., 1)"
-                    value={searchId}
-                    onChange={(e) => setSearchId(e.target.value)}
-                    className="input-field w-full pl-12"
-                  />
-                </div>
-                <button 
-                  type="submit" 
-                  disabled={actionLoading === 'lookup-q'}
-                  className="btn-primary flex items-center gap-2 whitespace-nowrap"
-                >
-                  {actionLoading === 'lookup-q' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-                  Find Question
-                </button>
-              </form>
+                  {/*  Separator */}
+                  <div className="relative flex items-center py-1">
+                    <div className="flex-grow h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+                    <span className="flex-none mx-4 text-gray-500 font-bold italic text-[12px] uppercase tracking-[0.3em]">
+                      or
+                    </span>
+                    <div className="flex-grow h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+                  </div>
 
-              {/* Managed Question Details */}
-              {managedQuestion && (
-                <div className="bg-[#3A3552] rounded-[32px] p-8 space-y-8 border-2 border-[#E8B995]/20 animate-in fade-in slide-in-from-bottom-4">
-                  
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h3 className="text-white font-bold text-xl">Question #{managedQuestion.question_id}</h3>
-                    </div>
-                    <div className="flex gap-2">
-                      {!isEditing ? (
-                        <button onClick={handleStartEditing} className="btn-secondary py-1.5 px-4 text-sm flex items-center gap-2">
-                          <Plus className="w-4 h-4 rotate-45" /> Edit Question
-                        </button>
-                      ) : (
-                        <button onClick={handleCancelEditing} className="bg-gray-500/20 text-gray-300 hover:bg-gray-500/40 py-1.5 px-4 rounded-xl text-sm font-bold transition-all">
-                          Discard Changes
-                        </button>
-                      )}
-                      <button onClick={() => handleDeleteQuestion(managedQuestion.question_id)} className="text-red-500 hover:bg-red-500/10 p-2 rounded-full transition-colors">
-                        <Trash2 className="w-5 h-5" />
+                  {/* Choice 2: Search by Topic/Difficulty */}
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-3">
+                      <select
+                        value={filterTopic}
+                        onChange={(e) => setFilterTopic(e.target.value)}
+                        className="input-field flex-1 bg-[#3A3552] cursor-pointer"
+                      >
+                        <option value="All">Any Topic</option>
+                        {availableTopics.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+
+                      <select
+                        value={filterDifficulty}
+                        onChange={(e) => setFilterDifficulty(e.target.value)}
+                        className="input-field flex-1 bg-[#3A3552] cursor-pointer"
+                      >
+                        <option value="All">Any Difficulty</option>
+                        {availableDifficulties.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+
+                      <button
+                        onClick={handleMetadataSearch}
+                        className="btn-secondary px-8 flex items-center gap-2"
+                      >
+                        <Search className="w-4 h-4" /> Search by Criteria
                       </button>
-                    </div>
-                  </div>
 
-                  <div className="grid md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Title</label>
-                      <input 
-                        disabled={!isEditing}
-                        value={managedQuestion.title}
-                        onChange={(e) => setManagedQuestion({...managedQuestion, title: e.target.value})}
-                        className={`input-field w-full bg-[#2D2942] ${!isEditing ? 'opacity-70 border-transparent cursor-default' : ''}`}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Topic</label>
-                      {isEditing ? (
-                        <select 
-                          value={managedQuestion.topic}
-                          onChange={(e) => setManagedQuestion({...managedQuestion, topic: e.target.value})}
-                          className="input-field w-full bg-[#2D2942] appearance-none"
-                        >
-                          <option>Arrays</option>
-                          <option>Strings</option>
-                          <option>Hash Tables</option>
-                          <option>Linked Lists</option>
-                          <option>Trees</option>
-                          <option>Graphs</option>
-                          <option>Greedy</option>
-                          <option>Dynamic Programming</option>
-                        </select>
-                      ) : (
-                        <div className="input-field w-full bg-[#2D2942] opacity-70 border-transparent">{managedQuestion.topic}</div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">
-                      Difficulty
-                    </label>
-                    <div className={`flex gap-3 ${!isEditing ? 'pointer-events-none' : ''}`}>
-                      {['Easy', 'Medium', 'Hard'].map((diff) => (
+                      {/* Global Clear Search */}
+                      
                         <button
-                          key={diff}
-                          type="button"
-                          onClick={() => setManagedQuestion({ ...managedQuestion, difficulty: diff })}
-                          className={`flex-1 py-2.5 rounded-xl font-bold transition-all text-sm ${
-                            managedQuestion.difficulty === diff 
-                              ? 'bg-[#E8B995] text-[#4A4563]' 
-                              : 'bg-[#2D2942] text-white opacity-40'
-                          }`}
+                          disabled={!isFiltered}
+                          onClick={() => {
+                            setFilterTopic('All');
+                            setFilterDifficulty('All');
+                            setSearchId('');
+                            setManagedQuestion(null);
+                            setActiveSearchMode('none');
+                            setCurrentPage(1);
+                            fetchQuestions(1, 'All', 'All');
+                          }}
+                          className="text-gray-400 hover:text-white px-4 flex items-center gap-2 transition-colors border border-white/5 rounded-xl hover:bg-white/5"
                         >
-                          {diff}
+                          <X className="w-4 h-4" /> Reset All
                         </button>
-                      ))}
+                      
                     </div>
                   </div>
+                </div>
 
-                  {/* Problem Statement */}
-                  <div className="space-y-2">
-                    <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Problem Statement</label>
-                    {isEditing ? (
-                      <textarea 
-                        rows={6}
-                        value={managedQuestion.statement}
-                        onChange={(e) => setManagedQuestion({...managedQuestion, statement: e.target.value})}
-                        className="input-field w-full bg-[#2D2942] rounded-[20px] resize-none focus:ring-2 ring-[#E8B995]/50"
-                      />
-                    ) : (
-                      <div className="prose prose-invert max-w-none text-white bg-[#2D2942]/50 p-6 rounded-[24px] border border-white/5">
-                        <ReactMarkdown 
-                          remarkPlugins={[remarkMath]} 
-                          rehypePlugins={[rehypeKatex]}
-                          components={{
-                            ol: ({node, ...props}) => <ol className="list-decimal pl-8 mb-4 space-y-2 text-white" {...props} />,
-                            ul: ({node, ...props}) => <ul className="list-disc pl-8 mb-4 space-y-2 text-white" {...props} />,
-                            li: ({node, ...props}) => <li className="text-white leading-relaxed" {...props} />,
-                            p: ({node, ...props}) => <p className="mb-4 last:mb-0 leading-relaxed break-words whitespace-pre-wrap" {...props} />
+
+              {/* The Expandable List */}
+              <div className="space-y-4">
+                {isLoading ? (
+                  <div className="flex justify-center py-12"><Loader2 className="animate-spin text-[#E8B995]" /></div>
+                ) : questions.length === 0 ? (
+                  <p className="text-gray-400 text-center py-8">No questions found on this page.</p>
+                ) : (
+                  questions.map((q) => {
+                    const isExpanded = managedQuestion?.question_id?.toString() === q.question_id.toString();
+                    
+                    return (
+                      <div
+                        key={q.question_id}
+                        className={`transition-all duration-300 rounded-[24px] overflow-hidden border-2 ${isExpanded ? 'bg-[#3A3552] border-[#E8B995] shadow-xl' : 'bg-[#3A3552]/40 border-transparent hover:border-white/10'
+                          }`}
+                      >
+                        {/* The main clickable header area */}
+                        
+                        <div
+                          ref={isExpanded ? scrollRef : null}
+                          style={{ scrollMarginTop: '20px' }}
+                          className="p-5 flex items-center justify-between cursor-pointer group"
+                          onClick={() => {
+                            // If we only have 1 question in the list, we are in "Search Mode"
+                            // Prevent collapsing in this mode
+                            const isSearchMode = questions.length === 1 && searchId !== '';
+
+                            if (isExpanded) {
+                              if (!isSearchMode) {
+                                setManagedQuestion(null);
+                              }
+                              // If isSearchMode, we do nothing (keep it expanded)
+                            } else {
+                              fetchQuestionDetails(q.question_id.toString());
+                            }
                           }}
                         >
-                          {managedQuestion.statement}
-                        </ReactMarkdown>
+                          {/* LEFT SIDE INFO (Now inside the clickable div) */}
+                          <div className="flex items-center gap-4">
+                            <span className="text-[#E8B995] font-mono font-bold">#{q.question_id}</span>
+                            <div>
+                              <h4 className="text-white font-bold group-hover:text-[#E8B995] transition-colors">{q.title}</h4>
+                              <div className="flex gap-2 mt-1">
+                                <span className="text-[10px] uppercase font-bold text-gray-400">{q.topic}</span>
+                                <span className={`text-[10px] uppercase font-bold ${q.difficulty === 'Easy' ? 'text-green-400' :
+                                    q.difficulty === 'Medium' ? 'text-yellow-400' : 'text-red-400'
+                                  }`}>• {q.difficulty}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* RIGHT SIDE ICONS */}
+                          <div className="flex items-center gap-3">
+                            {/* Update the loading check to use the specific ID */}
+                            {actionLoading === `fetching-${q.question_id}` && (
+                              <Loader2 className="w-4 h-4 animate-spin text-[#E8B995]" />
+                            )}
+                            <ChevronRight className={`... ${isExpanded ? 'rotate-90' : ''}`} />
+                          </div>
+                        </div>
+
+                        {/* Expandable Content (The "Deep" View) */}
+                        {isExpanded && (
+                          <div className="p-8 pt-0 space-y-8 animate-in fade-in slide-in-from-top-4">
+                            <div className="h-px bg-white/5 w-full mb-6" />
+                            
+                            {/* Reuse your existing Managed Question UI here */}
+                            <div className="flex justify-end gap-2">
+                              <button 
+                                onClick={() => setModalConfig({ isOpen: true, mode: 'edit', data: managedQuestion })} 
+                                className="btn-secondary py-1.5 px-4 text-sm flex items-center gap-2"
+                              >
+                                <Plus className="w-4 h-4 rotate-45" /> Edit Question
+                              </button>
+                              <button onClick={() => handleDeleteQuestion(managedQuestion.question_id)} className="text-red-500 hover:bg-red-500/10 p-2 rounded-full transition-colors">
+                                <Trash2 className="w-5 h-5" />
+                              </button>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-gray-400 text-xs font-bold uppercase tracking-wider">Problem Statement</label>
+                              <div className="prose prose-invert max-w-none text-white bg-[#2D2942]/50 p-6 rounded-[20px] border border-white/5">
+                                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                  {managedQuestion.statement}
+                                </ReactMarkdown>
+                              </div>
+                            </div>
+
+                            <div className="space-y-6">
+                              <DynamicArrayInput 
+                                label="Examples" 
+                                items={managedQuestion.examples?.filter((e: string) => e.trim() !== '') || []}
+                                isEditing={false}
+                                emptyMessage="No examples provided."
+                              />
+                              <DynamicArrayInput 
+                                label="Constraints" 
+                                items={managedQuestion.constraints?.filter((c: string) => c.trim() !== '') || []}
+                                isEditing={false}
+                                emptyMessage="No constraints defined."
+                              />
+                              <DynamicArrayInput 
+                                label="Hints"
+                                items={managedQuestion.hints?.filter((h: string) => h.trim() !== '') || []}
+                                isEditing={false}
+                                emptyMessage="No hints available for this question."
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-gray-400 text-xs font-bold uppercase tracking-wider">Python Template</label>
+                              <div className="rounded-[20px] overflow-hidden border border-white/5">
+                                <CodeMirror value={managedQuestion.template} theme={dracula} extensions={[python()]} readOnly={true} />
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
+                    );
+                  })
+                )}
+              </div>
 
-                  <div className="space-y-10">
-  
-                    <DynamicArrayInput 
-                      label="Examples" 
-                      items={managedQuestion.examples || ['']} 
-                      isEditing={isEditing}
-                      minRows={4}
-                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, examples: val})} 
-                    />
+              {/* Pagination Controls moved below the list */}
+              <div className="flex items-center justify-center gap-4 mt-12 pb-8">
+                <div className="flex items-center justify-center gap-4 mt-8">
+                <button
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(prev => prev - 1)}
+                  className="px-4 py-2 rounded-xl bg-[#3A3552] text-white disabled:opacity-30 hover:bg-[#453F5C] transition-all"
+                >
+                  Previous
+                </button>
 
-                    <DynamicArrayInput 
-                      label="Constraints" 
-                      items={managedQuestion.constraints || ['']} 
-                      isEditing={isEditing}
-                      minRows={2}
-                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, constraints: val})} 
-                    />
-
-                    <DynamicArrayInput 
-                      label="Hints" 
-                      items={managedQuestion.hints || ['']} 
-                      isEditing={isEditing}
-                      minRows={2}
-                      onUpdate={(val: string[]) => setManagedQuestion({...managedQuestion, hints: val})} 
-                    />
-                  </div>
-
-                  {/* Code Template */}
-                  <div className="space-y-2">
-                    <label className="text-gray-400 text-xs font-bold uppercase tracking-wider ml-2">Python Code Template</label>
-                    <div className={`rounded-[24px] overflow-hidden border-2 transition-all ${isEditing ? 'border-[#E8B995]' : 'border-white/5'}`}>
-                      <CodeMirror
-                        value={managedQuestion.template}
-                        minHeight="150px"
-                        theme={dracula}
-                        extensions={[python()]}
-                        readOnly={!isEditing}
-                        onChange={(value) => setManagedQuestion({ ...managedQuestion, template: value })}
-                      />
-                    </div>
-                  </div>
-
-                  {isEditing && (
-                    <button 
-                      onClick={handleUpdateQuestion}
-                      disabled={actionLoading === 'update-q'}
-                      className="w-full btn-secondary flex items-center justify-center gap-2 py-4 text-lg"
-                    >
-                      {actionLoading === 'update-q' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                      Save Changes
-                    </button>
-                  )}
+                <div className="flex gap-2">
+                  {Array.from({ length: totalPages }).map((_, i) => {
+                    const pageNum = i + 1;
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`w-10 h-10 rounded-xl font-bold transition-all ${
+                          currentPage === pageNum 
+                            ? 'bg-[#E8B995] text-[#4A4563] shadow-lg shadow-[#E8B995]/20' 
+                            : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+
+                <button
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(prev => prev + 1)}
+                  className="px-4 py-2 rounded-xl bg-[#3A3552] text-white disabled:opacity-30 hover:bg-[#453F5C] transition-all"
+                >
+                  Next
+                </button>
+              </div>
+              </div>
             </>
           )}
         </div>
       </div>
 
-      {/* Add Question Modal (Remains similar but with direct creation) */}
-      {isAddingQuestion && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 z-50">
-          <div className="bg-[#4A4563] rounded-[32px] w-full max-w-2xl max-h-[90vh] overflow-y-auto p-8 relative custom-scrollbar">
-            <button 
-              onClick={() => setIsAddingQuestion(false)}
-              className="absolute top-6 right-6 text-gray-400 hover:text-white"
-            >
-              <X className="w-6 h-6" />
-            </button>
-            
-            <h2 className="text-white font-bold text-2xl mb-6">New Question</h2>
-            
-            <form onSubmit={handleAddQuestion} className="space-y-6">
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-gray-300 text-sm ml-2">Title</label>
-                  <input 
-                    required
-                    value={newQuestion.title}
-                    onChange={(e) => setNewQuestion({...newQuestion, title: e.target.value})}
-                    placeholder="e.g. Two Sum"
-                    className="input-field w-full"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-gray-300 text-sm ml-2">Topic</label>
-                  <select 
-                    value={newQuestion.topic}
-                    onChange={(e) => setNewQuestion({...newQuestion, topic: e.target.value})}
-                    className="input-field w-full appearance-none"
-                  >
-                    <option>Arrays</option>
-                    <option>Strings</option>
-                    <option>Hash Tables</option>
-                    <option>Linked Lists</option>
-                    <option>Trees</option>
-                    <option>Graphs</option>
-                    <option>Greedy</option>
-                    <option>Dynamic Programming</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-gray-300 text-sm ml-2">Difficulty</label>
-                <div className="flex gap-4">
-                  {['Easy', 'Medium', 'Hard'].map((diff) => (
-                    <button
-                      key={diff}
-                      type="button"
-                      onClick={() => setNewQuestion({...newQuestion, difficulty: diff})}
-                      className={`flex-1 py-3 rounded-2xl font-bold transition-all ${
-                        newQuestion.difficulty === diff 
-                        ? 'bg-[#E8B995] text-[#4A4563]' 
-                        : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
-                      }`}
-                    >
-                      {diff}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-gray-300 text-sm ml-2">Problem Statement</label>
-                <textarea 
-                  required
-                  rows={4}
-                  value={newQuestion.statement}
-                  onChange={(e) => setNewQuestion({...newQuestion, statement: e.target.value})}
-                  placeholder="Describe the problem (in MarkDown)..."
-                  className="input-field w-full rounded-[24px] resize-none"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-gray-400 text-sm ml-2">Python Code Template</label>
-                <div className="rounded-[24px] overflow-hidden transition-all border-[#E8B995]">
-                  <CodeMirror
-                    value={newQuestion.template}
-                    minHeight="150px"
-                    maxHeight="200px"
-                    theme={dracula}
-                    extensions={[python()]}
-                    readOnly={false}
-                    editable={true}
-                    basicSetup={{
-                      lineNumbers: true,
-                      indentOnInput: true,
-                    }}
-                    onChange={(value) => setNewQuestion({ ...newQuestion, template: value })}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-8">
-                <DynamicArrayInput 
-                  label="Examples" 
-                  items={newQuestion.examples} 
-                  minRows={4} 
-                  onUpdate={(val: string[]) => setNewQuestion({...newQuestion, examples: val})} 
-                />
-
-                <DynamicArrayInput 
-                  label="Constraints" 
-                  items={newQuestion.constraints} 
-                  minRows={2} 
-                  onUpdate={(val: string[]) => setNewQuestion({...newQuestion, constraints: val})} 
-                />
-
-                <DynamicArrayInput 
-                  label="Hints" 
-                  items={newQuestion.hints} 
-                  minRows={2} 
-                  onUpdate={(val: string[]) => setNewQuestion({...newQuestion, hints: val})} 
-                />
-              </div>
-
-              <button 
-                type="submit" 
-                disabled={actionLoading === 'add-question'}
-                className="w-full btn-secondary text-lg py-4 flex items-center justify-center gap-2"
-              >
-                {actionLoading === 'add-question' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
-                Create Question
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
+      <QuestionModal 
+        isOpen={modalConfig.isOpen}
+        mode={modalConfig.mode}
+        initialData={modalConfig.data}
+        onClose={() => setModalConfig({ ...modalConfig, isOpen: false })}
+        onSuccess={handleModalSuccess}
+        topics={availableTopics}
+        difficulties={availableDifficulties}
+      />
 
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {

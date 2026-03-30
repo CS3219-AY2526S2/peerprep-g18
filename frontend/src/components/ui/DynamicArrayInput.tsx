@@ -7,22 +7,25 @@ import rehypeKatex from 'rehype-katex';
 interface DynamicArrayInputProps {
   label: string;
   items: string[];
-  onUpdate: (newItems: string[]) => void;
+  onUpdate?: (newItems: string[]) => void;
   minRows?: number;
   isEditing?: boolean;
+  emptyMessage?: string;
 }
 
-export function DynamicArrayInput({label, items, onUpdate, minRows = 2, isEditing = true }: DynamicArrayInputProps) {
-  const handleAdd = () => onUpdate([...items, '']);
-  const handleRemove = (index: number) => onUpdate(items.filter((_, i) => i !== index));
+export function DynamicArrayInput({label, items, onUpdate, minRows = 2, isEditing = true, emptyMessage = "No content available." }: DynamicArrayInputProps) {
+  const hasActualContent = items.some(item => item && item.trim().length > 0);
+  const handleAdd = () => onUpdate?.([...items, '']);
+  const handleRemove = (index: number) => onUpdate?.(items.filter((_, i) => i !== index));
   const handleChange = (index: number, value: string) => {
     const newItems = [...items];
     newItems[index] = value;
-    onUpdate(newItems);
+    onUpdate?.(newItems);
   };
 
   return (
     <div className="space-y-3">
+      {/* Header stays the same */}
       <div className="flex justify-between items-center ml-2">
         <label className="text-gray-400 text-xs font-bold uppercase tracking-wider">{label}</label>
         {isEditing && (
@@ -35,54 +38,65 @@ export function DynamicArrayInput({label, items, onUpdate, minRows = 2, isEditin
           </button>
         )}
       </div>
+
       <div className="space-y-4">
-        {items.map((item, idx) => (
-          <div key={idx} className="flex gap-3 items-start animate-in fade-in slide-in-from-left-2">
-            <div className="relative flex-1">
-              <span className="absolute left-4 top-3 text-[#E8B995] font-mono text-xs z-10">
-                {idx + 1}.
-              </span>
-              
-              {isEditing ? (
-                <textarea 
-                  rows={minRows}
-                  className="input-field w-full pl-10 pt-2 text-sm bg-[#3A3552] resize-none whitespace-pre-wrap break-words" 
-                  value={item} 
-                  onChange={(e) => handleChange(idx, e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && e.stopPropagation()}
-                />
-              ) : (
-                <div className="w-full pl-10 pr-6 py-3 bg-[#2D2942]/40 rounded-2xl border border-white/5 overflow-hidden">
-                  <div className="prose prose-invert max-w-none text-sm text-white">
-                    <ReactMarkdown 
-                      remarkPlugins={[remarkMath]} 
-                      rehypePlugins={[rehypeKatex]}
-                      components={{
-                        ol: ({node, ...props}) => <ol className="list-decimal pl-4 mb-2" {...props} />,
-                        ul: ({node, ...props}) => <ul className="list-disc pl-4 mb-2" {...props} />,
-                        li: ({node, ...props}) => <li className="mb-1" {...props} />,
-                        p: ({node, ...props}) => <p className="leading-relaxed break-words whitespace-pre-wrap" {...props} />,
-                        code: ({node, ...props}) => <code className="bg-[#3A3552] px-1 rounded text-[#E8B995]" {...props} />
-                      }}
-                    >
-                      {item || "*No content provided.*"}
-                    </ReactMarkdown>
+        {/* VIEW MODE EMPTY STATE: If not editing and no content, show the message */}
+        {!isEditing && !hasActualContent ? (
+          <div className="ml-2 p-4 bg-[#2D2942]/20 border border-dashed border-white/10 rounded-2xl">
+            <p className="text-gray-500 italic text-sm text-center">
+              {emptyMessage}
+            </p>
+          </div>
+        ) : (
+          /* Map through items if editing OR if content exists */
+          items.map((item, idx) => (
+            <div key={idx} className="flex gap-3 items-start animate-in fade-in slide-in-from-left-2">
+              <div className="relative flex-1">
+                <span className="absolute left-4 top-3 text-[#E8B995] font-mono text-xs z-10">
+                  {idx + 1}.
+                </span>
+                
+                {isEditing ? (
+                  <textarea 
+                    rows={minRows}
+                    className="input-field w-full pl-10 pt-2 text-sm bg-[#3A3552] resize-none whitespace-pre-wrap break-words" 
+                    value={item} 
+                    onChange={(e) => handleChange(idx, e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && e.stopPropagation()}
+                  />
+                ) : (
+                  <div className="w-full pl-10 pr-6 py-3 bg-[#2D2942]/40 rounded-2xl border border-white/5 overflow-hidden">
+                    <div className="prose prose-invert max-w-none text-sm text-white">
+                      <ReactMarkdown 
+                        remarkPlugins={[remarkMath]} 
+                        rehypePlugins={[rehypeKatex]}
+                        components={{
+                          ol: ({node, ...props}) => <ol className="list-decimal pl-4 mb-2" {...props} />,
+                          ul: ({node, ...props}) => <ul className="list-disc pl-4 mb-2" {...props} />,
+                          li: ({node, ...props}) => <li className="mb-1" {...props} />,
+                          p: ({node, ...props}) => <p className="leading-relaxed break-words whitespace-pre-wrap" {...props} />,
+                          code: ({node, ...props}) => <code className="bg-[#3A3552] px-1 rounded text-[#E8B995]" {...props} />
+                        }}
+                      >
+                        {item || "*No content provided.*"}
+                      </ReactMarkdown>
+                    </div>
                   </div>
-                </div>
+                )}
+              </div>
+              
+              {isEditing && idx > 0 && (
+                <button 
+                  type="button"
+                  onClick={() => handleRemove(idx)} 
+                  className="mt-1.5 text-red-400 p-2 hover:bg-red-400/10 rounded-xl transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               )}
             </div>
-            
-            {isEditing && idx > 0 && (
-              <button 
-                type="button"
-                onClick={() => handleRemove(idx)} 
-                className="mt-1.5 text-red-400 p-2 hover:bg-red-400/10 rounded-xl transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            )}
-          </div>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );
