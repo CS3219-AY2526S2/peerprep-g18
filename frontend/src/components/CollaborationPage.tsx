@@ -65,7 +65,18 @@ async function fetchTicket(sessionId: string): Promise<string> {
     },
     body: JSON.stringify({ sessionId })
   });
-  if (!res.ok) throw new Error(`Ticket fetch failed: ${res.status}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && data.detail === 'ACCOUNT_DELETED') {
+      window.dispatchEvent(new Event('auth:account_deleted'));
+      throw new Error('ACCOUNT_DELETED');
+    }
+    if (res.status === 403 && data.detail === 'TOKEN_STALE') {
+      window.dispatchEvent(new Event('auth:token_stale'));
+      throw new Error('TOKEN_STALE');
+    }
+    throw new Error(`Ticket fetch failed: ${res.status}`);
+  }
   const data = await res.json();
   return data.ticket;
 }
@@ -74,6 +85,8 @@ export function CollaborationPage() {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
   const { user } = useUser();
+
+  const isAdmin = user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'root';
 
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null);
   const [question, setQuestion] = useState<Question | null>(null);
@@ -117,7 +130,18 @@ export function CollaborationPage() {
         // Fetch session metadata
         const sessionRes = await fetch(`${GATEWAY_URL}/collab/session/${sessionId}`, { headers });
         if (cancelled) return;
-        if (!sessionRes.ok) throw new Error('Failed to fetch session');
+        if (!sessionRes.ok) {
+          const errData = await sessionRes.json().catch(() => ({}));
+          if (sessionRes.status === 401 && errData.detail === 'ACCOUNT_DELETED') {
+            window.dispatchEvent(new Event('auth:account_deleted'));
+            return;
+          }
+          if (sessionRes.status === 403 && errData.detail === 'TOKEN_STALE') {
+            window.dispatchEvent(new Event('auth:token_stale'));
+            return;
+          }
+          throw new Error('Failed to fetch session');
+        }
         const meta: SessionMeta = await sessionRes.json();
         setSessionMeta(meta);
         startedAtRef.current = new Date(meta.startedAt).getTime();
@@ -144,7 +168,7 @@ export function CollaborationPage() {
         if (cancelled) return;
         console.error('Session data fetch error:', err);
         toast.error('Failed to load session data');
-        navigate('/dashboard', { replace: true });
+        navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
       }
     };
 
@@ -363,8 +387,8 @@ export function CollaborationPage() {
       // Navigate anyway even if this fails
     }
 
-    navigate('/dashboard', { replace: true });
-  }, [navigate, sessionId]);
+    navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
+  }, [navigate, sessionId, isAdmin]);
 
   const handleCopySessionId = () => {
     if (sessionId) {
