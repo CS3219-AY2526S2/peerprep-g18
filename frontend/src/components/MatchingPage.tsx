@@ -42,6 +42,20 @@ export function MatchingPage() {
             openWhenHidden: true,
             onopen: async (response) => {
               if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                if (response.status === 401 && data.detail === 'ACCOUNT_DELETED') {
+                  ctrl.abort();
+                  window.dispatchEvent(new Event('auth:account_deleted'));
+                  reject(new Error('ACCOUNT_DELETED'));
+                  return;
+                }
+                if (response.status === 403 && data.detail === 'TOKEN_STALE') {
+                  ctrl.abort();
+                  window.dispatchEvent(new Event('auth:token_stale'));
+                  navigate('/admin', { replace: true });
+                  reject(new Error('TOKEN_STALE'));
+                  return;
+                }
                 reject(new Error(`SSE open failed: ${response.status}`));
               }
             },
@@ -62,10 +76,18 @@ export function MatchingPage() {
               }
             },
             onerror: (err) => {
-              if (ctrl.signal.aborted) return;
+              // Throwing from onerror tells fetchEventSource to stop retrying permanently.
+              // Returning would tell it to retry after backoff, which causes the toast
+              // to loop indefinitely when the account has been deleted.
+              if (ctrl.signal.aborted) throw err;
               console.error('SSE error:', err);
               toast.error('Connection lost. Retrying...');
             }
+          }).catch((err) => {
+            // fetchEventSource rejects when onerror throws.
+            // Forward to the outer Promise only if it was not an intentional abort —
+            // intentional aborts are handled silently by the outer catch block.
+            if (!ctrl.signal.aborted) reject(err);
           });
         });
 
@@ -87,6 +109,17 @@ export function MatchingPage() {
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
+          if (res.status === 401 && err.detail === 'ACCOUNT_DELETED') {
+            ctrl.abort();
+            window.dispatchEvent(new Event('auth:account_deleted'));
+            return;
+          }
+          if (res.status === 403 && err.detail === 'TOKEN_STALE') {
+            ctrl.abort();
+            window.dispatchEvent(new Event('auth:token_stale'));
+            navigate('/admin', { replace: true });
+            return;
+          }
           throw new Error(err.detail || `Matching failed: ${res.status}`);
         }
       } catch (err: any) {

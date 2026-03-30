@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 import httpx
 import firebase_admin
 from firebase_admin import credentials, auth
+import redis.asyncio as aioredis
 
 cred = credentials.Certificate("firebase-service-account.json")
 firebase_admin.initialize_app(cred)
@@ -16,14 +17,22 @@ firebase_admin.initialize_app(cred)
 app = FastAPI(title="PeerPrep API Gateway")
 
 http_client = httpx.AsyncClient()
+redis_auth: aioredis.Redis = None  # type: ignore[assignment]
 
 @app.on_event("startup")
 async def startup():
-    pass
+    global redis_auth
+    redis_auth = aioredis.Redis(
+        host=os.getenv("REDIS_AUTH_HOST", "redis-auth"),
+        port=6379,
+        decode_responses=True
+    )
 
 @app.on_event("shutdown")
 async def shutdown_event():
     await http_client.aclose()
+    if redis_auth:
+        await redis_auth.aclose()
 
 # app.add_middleware(
 #     CORSMiddleware,
@@ -60,10 +69,32 @@ async def verify_token(request: Request):
 
     try:
         decoded_token = auth.verify_id_token(token, clock_skew_seconds=30)
-        return decoded_token
     except Exception as e:
-        print(f"❌ FIREBASE ERROR: {str(e)}")
+        print(f"FIREBASE ERROR: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Auth Failed: {str(e)}")
+
+    uid = decoded_token.get("uid")
+    iat = decoded_token.get("iat", 0)  # Token issued-at timestamp (Unix seconds)
+
+    # -------------------------------------------------------
+    # Redis auth-state checks (fail open: skip if Redis is down)
+    # -------------------------------------------------------
+    try:
+        # 1. Was this user deleted by an admin?
+        if await redis_auth.exists(f"invalidated_user:{uid}"):
+            raise HTTPException(status_code=401, detail="ACCOUNT_DELETED")
+
+        # 2. Were this user's claims updated after this token was issued?
+        #    (e.g. promoted to admin — token still carries old role)
+        stale_ts = await redis_auth.get(f"stale_claims:{uid}")
+        if stale_ts and iat <= int(stale_ts):
+            raise HTTPException(status_code=403, detail="TOKEN_STALE")
+    except HTTPException:
+        raise  # Always re-raise our own 401/403 decisions
+    except Exception as e:
+        print(f"Redis auth check failed (failing open): {e}")
+
+    return decoded_token
 
 # ==========================================
 # SSE PROXY — must be before the catch-all

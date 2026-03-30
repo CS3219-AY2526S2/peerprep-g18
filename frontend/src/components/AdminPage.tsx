@@ -12,6 +12,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut, ChevronRight } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
+import { auth } from '../firebase';
 import { DynamicArrayInput } from './ui/DynamicArrayInput';
 import { QuestionModal } from './ui/QuestionModal'
 import { useUser } from '../contexts/UserContext';
@@ -69,6 +70,20 @@ export function AdminPage() {
     data?: any;
   }>({ isOpen: false, mode: 'add' });
 
+  // Checks a gateway response for auth invalidation signals.
+  // Returns true if an auth event was dispatched and the caller should return early.
+  // Uses response.clone() so the original body remains readable by the caller.
+  const handleAuthError = async (response: Response): Promise<boolean> => {
+    if (response.status === 401) {
+      const data = await response.clone().json().catch(() => ({}));
+      if (data.detail === 'ACCOUNT_DELETED') {
+        window.dispatchEvent(new Event('auth:account_deleted'));
+        return true;
+      }
+    }
+    return false;
+  };
+
   const fetchQuestions = async (page: number, topic = 'All', difficulty = 'All') => {
     setIsLoading(true);
     try {
@@ -82,6 +97,7 @@ export function AdminPage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
+      if (await handleAuthError(response)) return;
       const data = await response.json();
       setQuestions(data.questions);
       setTotalPages(data.total_pages);
@@ -112,12 +128,32 @@ export function AdminPage() {
 
   const fetchUsers = async () => {
     setIsLoading(true);
+    setError('');
     try {
-      const token = localStorage.getItem('peerprep_token');
-      const response = await fetch(`${GATEWAY_URL}/admin/users`, {
+      const firebaseUser = auth.currentUser;
+      if (!firebaseUser) return;
+
+      let token = await firebaseUser.getIdToken();
+      let response = await fetch(`${GATEWAY_URL}/admin/users`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      
+
+      if (await handleAuthError(response)) return;
+
+      // Token claims are stale (this user was just promoted). Refresh the token
+      // and retry once. Also dispatch auth:token_stale so UserContext updates
+      // user.role immediately — the admin badge on Dashboard will reflect this.
+      if (response.status === 403) {
+        const data = await response.json().catch(() => ({}));
+        if (data.detail === 'TOKEN_STALE') {
+          window.dispatchEvent(new Event('auth:token_stale'));
+          token = await firebaseUser.getIdToken(true);
+          response = await fetch(`${GATEWAY_URL}/admin/users`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+        }
+      }
+
       if (!response.ok) throw new Error('Failed to fetch users');
       const data = await response.json();
       setUsers(data);
@@ -168,6 +204,7 @@ export function AdminPage() {
       const response = await fetch(`${GATEWAY_URL}/question/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (await handleAuthError(response)) return;
       if (!response.ok) throw new Error('Failed to fetch details');
       const data = await response.json();
       setManagedQuestion(data);
@@ -194,6 +231,7 @@ export function AdminPage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
+      if (await handleAuthError(response)) return;
       if (!response.ok) throw new Error('Question not found');
       const data = await response.json();
       setManagedQuestion(data);
@@ -246,6 +284,7 @@ export function AdminPage() {
         fetch(`${GATEWAY_URL}/question/difficulties`, { headers })
       ]);
 
+      if (await handleAuthError(topicsRes) || await handleAuthError(diffRes)) return;
       if (topicsRes.ok && diffRes.ok) {
         const topics = await topicsRes.json();
         const difficulties = await diffRes.json();
@@ -272,6 +311,7 @@ export function AdminPage() {
         fetch(`${GATEWAY_URL}/question/difficulties`, { headers })
       ]);
 
+      if (await handleAuthError(topicsRes) || await handleAuthError(diffRes)) return;
       if (topicsRes.ok && diffRes.ok) {
         setAvailableTopics(await topicsRes.json());
         setAvailableDifficulties(await diffRes.json());
@@ -307,6 +347,7 @@ export function AdminPage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
+      if (await handleAuthError(response)) return;
       if (!response.ok) throw new Error('Failed to delete question');
 
       const updatedQuestions = questions.filter(q => q.question_id.toString() !== questionId.toString());
@@ -343,6 +384,7 @@ export function AdminPage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
+      if (await handleAuthError(response)) return;
       if (!response.ok) throw new Error('Failed to promote user');
       
       setUsers(users.map(u => u.user_id === targetUserId ? { ...u, role: 'Admin' } : u));
@@ -364,6 +406,7 @@ export function AdminPage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
+      if (await handleAuthError(response)) return;
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Failed to delete user');

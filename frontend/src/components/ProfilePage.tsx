@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Edit2, Check, Loader2, AlertTriangle } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
+import { auth } from '../firebase';
 
 export function ProfilePage() {
   const navigate = useNavigate();
@@ -12,6 +13,12 @@ export function ProfilePage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showPasswords, setShowPasswords] = useState(false);
+
+  const isAdmin = user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'root';
+
+  useEffect(() => {
+    if (isAdmin) navigate('/admin', { replace: true });
+  }, [isAdmin, navigate]);
 
   const [profileData, setProfileData] = useState({
     username: user.Username || user.username,
@@ -33,7 +40,9 @@ export function ProfilePage() {
     setErrors({});
 
     try {
-      const token = localStorage.getItem('peerprep_token');
+      const firebaseUser = auth.currentUser;
+      if (!firebaseUser) { navigate('/', { replace: true }); return; }
+      const token = await firebaseUser.getIdToken();
       const response = await fetch(`${GATEWAY_URL}/users/${user.UserID || user.uid}`, {
         method: 'PATCH',
         headers: {
@@ -44,8 +53,16 @@ export function ProfilePage() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || 'Failed to update profile');
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 401 && data.detail === 'ACCOUNT_DELETED') {
+          window.dispatchEvent(new Event('auth:account_deleted'));
+          return;
+        }
+        if (response.status === 403 && data.detail === 'TOKEN_STALE') {
+          window.dispatchEvent(new Event('auth:token_stale'));
+          return;
+        }
+        throw new Error(data.detail || 'Failed to update profile');
       }
 
       setUser({ ...user, username: profileData.username });
@@ -70,7 +87,9 @@ export function ProfilePage() {
     }
 
     try {
-      const token = localStorage.getItem('peerprep_token');
+      const firebaseUser = auth.currentUser;
+      if (!firebaseUser) { navigate('/', { replace: true }); return; }
+      const token = await firebaseUser.getIdToken();
       const response = await fetch(`${GATEWAY_URL}/users/${user.UserID || user.uid}`, {
         method: 'PATCH',
         headers: {
@@ -83,7 +102,18 @@ export function ProfilePage() {
         })
       });
 
-      if (!response.ok) throw new Error('Failed to change password');
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 401 && data.detail === 'ACCOUNT_DELETED') {
+          window.dispatchEvent(new Event('auth:account_deleted'));
+          return;
+        }
+        if (response.status === 403 && data.detail === 'TOKEN_STALE') {
+          window.dispatchEvent(new Event('auth:token_stale'));
+          return;
+        }
+        throw new Error('Failed to change password');
+      }
 
       setIsChangingPassword(false);
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -105,13 +135,26 @@ export function ProfilePage() {
 
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('peerprep_token');
+      const firebaseUser = auth.currentUser;
+      if (!firebaseUser) { navigate('/', { replace: true }); return; }
+      const token = await firebaseUser.getIdToken();
       const response = await fetch(`${GATEWAY_URL}/users/${user.uid || user.UserID}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
-      if (!response.ok) throw new Error('Failed to delete account');
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 401 && data.detail === 'ACCOUNT_DELETED') {
+          window.dispatchEvent(new Event('auth:account_deleted'));
+          return;
+        }
+        if (response.status === 403 && data.detail === 'TOKEN_STALE') {
+          window.dispatchEvent(new Event('auth:token_stale'));
+          return;
+        }
+        throw new Error('Failed to delete account');
+      }
 
       await handleLogout();
       navigate('/', { replace: true });

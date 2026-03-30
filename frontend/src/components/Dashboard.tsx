@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, User, Users as UsersIcon, Check } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
@@ -31,7 +31,18 @@ export function Dashboard() {
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [activeUsersCount] = useState(Math.floor(Math.random() * 20) + 5);
 
-  const isAdmin = user.role?.toLowerCase() === 'admin' || user.username === 'Root';
+  const isAdmin = user.role?.toLowerCase() === 'admin' || user.role?.toLowerCase() === 'root' || user.username === 'Root';
+
+  // Admins should not see the user dashboard — redirect to admin panel.
+  // This covers: admin login, mid-session promotion (via visibilitychange or
+  // auth:token_stale), and direct /dashboard URL access by an admin.
+  useEffect(() => {
+    if (isAdmin) {
+      navigate('/admin', { replace: true });
+    }
+  }, [isAdmin, navigate]);
+
+  if (isAdmin) return null; // prevent flash of user dashboard while redirecting
 
   const toggleDifficulty = (diffId: string) => {
     setSelectedDifficulties(prev =>
