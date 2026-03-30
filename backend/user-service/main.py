@@ -260,7 +260,7 @@ def perform_delete(user_id: str):
     try:
         auth.revoke_refresh_tokens(user_id)
     except Exception as e:
-        print(f"⚠️  Failed to revoke Firebase tokens for {user_id}: {e}")
+        print(f"Failed to revoke Firebase tokens for {user_id}: {e}")
 
     # Blacklist the UID in Redis so the API gateway immediately rejects any
     # still-valid JWT (tokens live up to 1 hour after issuance).
@@ -268,7 +268,7 @@ def perform_delete(user_id: str):
     try:
         redis_auth.setex(f"invalidated_user:{user_id}", 3600, "1")
     except Exception as e:
-        print(f"⚠️  Failed to write invalidated_user to Redis for {user_id}: {e}")
+        print(f"Failed to write invalidated_user to Redis for {user_id}: {e}")
 
     return {"message": f"User {user_id} deleted successfully"}
 
@@ -319,6 +319,6 @@ def promote_user(target_user_id: str, x_user_role: str = Header(None)):
     try:
         redis_auth.setex(f"stale_claims:{target_user_id}", 3600, str(int(time.time())))
     except Exception as e:
-        print(f"⚠️  Failed to write stale_claims to Redis for {target_user_id}: {e}")
+        print(f"Failed to write stale_claims to Redis for {target_user_id}: {e}")
 
     return {"message": "User promoted to Admin successfully"}
