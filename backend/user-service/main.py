@@ -293,7 +293,6 @@ def get_all_users(x_user_role: str = Header(None)):
 # --- PROMOTE USER ---
 @app.post("/admin/promote/{target_user_id}")
 def promote_user(target_user_id: str, x_user_role: str = Header(None)):
-    # 🔴 FIX: Allow both Admin and Root to promote users
     role_check = x_user_role.strip().lower() if x_user_role else ""
     if role_check not in ["admin", "root"]:
         raise HTTPException(status_code=403, detail="Admin access required")
