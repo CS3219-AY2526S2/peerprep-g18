@@ -54,7 +54,6 @@ export function AdminPage() {
   const [questions, setQuestions] = useState<any[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const questionsPerPage = 10;
   const [activeSearchMode, setActiveSearchMode] = useState<'none' | 'id' | 'criteria'>('none');
 
   const isFiltered =
