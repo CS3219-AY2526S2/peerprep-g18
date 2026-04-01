@@ -1,0 +1,71 @@
+@startuml Question Service Sequence Diagram
+!theme plain
+skinparam responseMessageBelowArrow true
+
+title Question Service — Sequence Diagram
+
+actor Client
+participant "API Gateway" as GW
+participant "Question Service" as QS
+database "Firestore" as FS
+participant "Firebase Auth" as FA
+
+== Get Random Question (GET /question?topic&difficulty) ==
+
+Client -> GW: GET /question?topic=Array&difficulty=Easy\nAuthorization: Bearer <token>
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with user headers
+QS -> QS: Normalize topic & difficulty
+QS -> FS: Query where topic==X AND difficulty==Y\n(select IDs only)
+FS --> QS: Matching question IDs
+QS -> QS: random.choice(ids)
+QS --> Client: 200 {question_id}
+
+== Get Question by ID (GET /question/{id}) ==
+
+Client -> GW: GET /question/42\nAuthorization: Bearer <token>
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with user headers
+QS -> FS: Get document by ID
+FS --> QS: Question document
+QS --> Client: 200 {question object}
+
+== Create Question (POST /question) — Admin ==
+
+Client -> GW: POST /question\nAuthorization: Bearer <token>\n{title, topic, difficulty, statement, template}
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with X-User-Role header
+QS -> QS: Verify admin/root role
+QS -> QS: Validate body (Pydantic)
+QS -> FS: Get max question_id (ORDER BY DESC LIMIT 1)
+FS --> QS: Current max ID
+QS -> QS: new_id = max_id + 1\nNormalize topic & difficulty
+QS -> FS: Set document(new_id) with question data
+FS --> QS: OK
+QS --> Client: 201 {question object}
+
+== Update Question (PUT /question/{id}) — Admin ==
+
+Client -> GW: PUT /question/42\nAuthorization: Bearer <token>\n{partial fields}
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with X-User-Role header
+QS -> QS: Verify admin/root role
+QS -> FS: Get existing document
+FS --> QS: Question document
+QS -> QS: Extract only provided fields\nNormalize topic/difficulty if present
+QS -> FS: Update document with changed fields
+FS --> QS: OK
+QS --> Client: 200 {updated question object}
+
+== Delete Question (DELETE /question/{id}) — Admin ==
+
+Client -> GW: DELETE /question/42\nAuthorization: Bearer <token>
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with X-User-Role header
+QS -> QS: Verify admin/root role
+QS -> FS: Check document exists
+QS -> FS: Delete document
+FS --> QS: OK
+QS --> Client: 204 No Content
+
+@enduml

@@ -6,7 +6,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.database import db
-from app.models.domain import Question, QuestionCreate, QuestionUpdate
+from app.models.domain import PaginatedQuestions, Question, QuestionCreate, QuestionUpdate
 
 router = APIRouter()
 
@@ -18,67 +18,6 @@ def verify_admin(x_user_role: Optional[str]):
             status_code=status.HTTP_403_FORBIDDEN, 
             detail="Admin privileges required"
         )
-
-
-# Get a random question ID based on a given topic and difficulty level
-@router.get("/", response_model=dict)
-async def read_questions(
-    topic: str, 
-    difficulty: str
-):
-    topic = topic.strip().title()
-    difficulty = difficulty.strip().title()
-    
-    questions_ref = db.collection("questions")
-    query = questions_ref.where(
-        filter=FieldFilter("topic", "==", topic)
-    ).where(
-        filter=FieldFilter("difficulty", "==", difficulty)
-    )
-
-    # fetch only the document IDs
-    docs = query.select([]).stream()
-    doc_ids = [doc.id for doc in docs]
-
-    if not doc_ids:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"No questions found for {topic} with {difficulty} difficulty"
-        )
-
-    randomQuestion_id = random.choice(doc_ids)
-
-    return {"question_id": randomQuestion_id}
-
-    
-
-# @router.get("/brew", status_code=418)
-# async def brew():
-#     return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
-
-# Get specific question by ID
-# This endpoint is expected to be used by question-history service to fetch question details for a given question_id.
-@router.get("/{question_id}", response_model=Question)
-async def read_question(question_id: str):
-    questions_ref = db.collection("questions")
-
-    # Fetch the question
-    doc_ref = questions_ref.document(question_id)
-    doc = doc_ref.get()
-
-    if not doc.exists:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Question not found with ID: {question_id}"
-        )
-
-    question_data = doc.to_dict()
-    
-    # Add the document ID to the returned data for consistency with the Question model
-    question_data["question_id"] = doc.id
-
-    return question_data
-
 
 # --- ADMIN ENDPOINTS ---
 
@@ -93,9 +32,8 @@ async def create_question(
     verify_admin(x_user_role)
 
     questions_ref = db.collection("questions")
-    doc_ref = questions_ref.order_by("question_id", direction=firestore.Query.DESCENDING).limit(1)
-    doc = doc_ref.get()
-    question_id = int(doc[0].to_dict().get("question_id"))+1 if doc else 1
+    docs = questions_ref.order_by("question_id", direction=firestore.Query.DESCENDING).limit(1).get()
+    question_id = int(docs[0].to_dict().get("question_id", 0)) + 1 if docs else 1
 
     question_dict = question.model_dump()
     question_dict["topic"] = question_dict["topic"].strip().title()
@@ -103,7 +41,7 @@ async def create_question(
 
     
 
-    new_question = {**question_dict, "question_id": str(question_id)}
+    new_question = {**question_dict, "question_id": question_id}
 
     # Save to Firestore
     questions_ref.document(str(question_id)).set(new_question, merge=True)
@@ -167,3 +105,149 @@ async def delete_question(
 
     return None
 
+# Endpoint to fetch all unique topics for filtering options in the frontend
+@router.get("/topics", response_model=list[str])
+def get_topics():
+    docs = db.collection("questions").select(["topic"]).stream()
+    unique_topics = set()
+    for doc in docs:
+        topic = doc.to_dict().get("topic")
+        if topic:
+            unique_topics.add(topic)
+            
+    return sorted(list(unique_topics))
+
+# Endpoint to fetch all unique difficulties for filtering options in the frontend
+@router.get("/difficulties", response_model=list[str])
+def get_difficulties():
+    docs = db.collection("questions").select(["difficulty"]).stream()
+    unique_diffs = set()
+    for doc in docs:
+        diff = doc.to_dict().get("difficulty")
+        if diff:
+            unique_diffs.add(diff)            
+    # Custom sort order
+    order = {"Easy": 0, "Medium": 1, "Hard": 2}
+    return sorted(list(unique_diffs), key=lambda x: order.get(x, 99))
+
+@router.get("/all", response_model=PaginatedQuestions)
+async def get_all_questions(
+    page: int = 1,
+    page_size: int = 10,
+    qid: Optional[str] = None,
+    topic: Optional[str] = None,
+    difficulty: Optional[str] = None
+):
+    query = db.collection("questions")
+
+    if qid:
+        doc = query.document(str(qid)).get()
+        if doc.exists:
+            q_data = doc.to_dict()
+            # Filter the keys to match your metadata select
+            filtered_data = {
+                "question_id": str(q_data.get("question_id", qid)),
+                "title": q_data.get("title", ""),
+                "topic": q_data.get("topic", ""),
+                "difficulty": q_data.get("difficulty", "")
+            }
+            return {
+                "questions": [filtered_data],
+                "total_pages": 1,
+                "current_page": 1,
+                "total_items": 1
+            }
+        else:
+            # This is just a way of saying such a question doesnt exits
+            return {"questions": [], "total_pages": 0, "current_page": 1, "total_items": 0}
+    
+    if topic and topic != "All":
+        topic = topic.strip().title()
+        query = query.where(filter=FieldFilter("topic", "==", topic))
+    if difficulty and difficulty != "All":
+        difficulty = difficulty.strip().title()
+        query = query.where(filter=FieldFilter("difficulty", "==", difficulty))
+
+    offset = (page - 1) * page_size
+    
+    paged_query = query.select(["question_id", "title", "topic", "difficulty"]) \
+                       .order_by("question_id") \
+                       .limit(page_size) \
+                       .offset(offset)
+
+    questions = []
+    for doc in paged_query.stream():
+        data = doc.to_dict()
+        data["question_id"] = str(data.get("question_id", ""))
+        questions.append(data)
+
+    count_query = query.count()
+    count_result = count_query.get()
+    total_items = count_result[0][0].value
+
+    return {
+        "questions": questions,
+        "total_pages": (total_items + page_size - 1) // page_size,
+        "current_page": page,
+        "total_items": total_items
+    }
+
+
+# --- USER ENDPOINTS ---
+
+# Get a random question ID based on a given topic and difficulty level
+@router.get("/", response_model=dict)
+async def read_questions(
+    topic: str, 
+    difficulty: str
+):
+    topic = topic.strip().title()
+    difficulty = difficulty.strip().title()
+    
+    questions_ref = db.collection("questions")
+    query = questions_ref.where(
+        filter=FieldFilter("topic", "==", topic)
+    ).where(
+        filter=FieldFilter("difficulty", "==", difficulty)
+    )
+
+    # fetch only the document IDs
+    docs = query.select([]).stream()
+    doc_ids = [doc.id for doc in docs]
+
+    if not doc_ids:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"No questions found for {topic} with {difficulty} difficulty"
+        )
+
+    randomQuestion_id = random.choice(doc_ids)
+
+    return {"question_id": randomQuestion_id}
+
+# @router.get("/brew", status_code=418)
+# async def brew():
+#     return {"detail": "I'm a teapot! The requested entity body is short and stout. Tip me over and pour me out!"}
+
+# Get specific question by ID
+# This endpoint is expected to be used by question-history service to fetch question details for a given question_id.
+@router.get("/{question_id}", response_model=Question)
+async def read_question(question_id: str):
+    questions_ref = db.collection("questions")
+
+    # Fetch the question
+    doc_ref = questions_ref.document(question_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Question not found with ID: {question_id}"
+        )
+
+    question_data = doc.to_dict()
+    
+    # Add the document ID to the returned data for consistency with the Question model
+    question_data["question_id"] = doc.id
+
+    return question_data

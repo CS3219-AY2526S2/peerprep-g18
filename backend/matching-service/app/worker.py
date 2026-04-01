@@ -20,7 +20,7 @@ async def match_worker():
                 _, message_data = result
                 ticket = json.loads(message_data)
                 
-                uid = ticket["user_id"]
+                uid = ticket["uid"]
                 ticket_id = ticket["ticket_id"]
                 combinations = ticket["combinations"]
                 join_timestamp = ticket["join_timestamp"]
@@ -92,26 +92,6 @@ async def match_worker():
                         pipe.setex(f"match_result:{timed_out_ticket_id}", 300, timeout_payload)
                         
                     await pipe.execute()
-                print(f"Timeout processed for {timed_out_uid}.")
-            
-            '''now = int(time.time())
-            # Users with timeout_tracket set 
-            timed_out_users = await database.redis_match.zrangebyscore("timeout_tracker", 0, now)
-
-            for uid in timed_out_users:
-                # Remove active status and timeout tracker
-                async with database.redis_match.pipeline() as pipe:
-                    pipe.delete(f"active_user:{uid}")
-                    pipe.zrem("timeout_tracker", uid)
-                    await pipe.execute()
-
-                timeout_payload = json.dumps({
-                    "event": "timeout",
-                    "user_id": uid
-                })
-                await database.redis_pubsub.publish(f"match_events:{uid}", timeout_payload) # Timeout event
-                
-                print(f"Sent timeout event for {uid}. User is no longer active in queue.")'''       
+                print(f"Timeout processed for {timed_out_uid}.")       
         except Exception as e:
             print(f"Worker error: {str(e)}")
-        await asyncio.sleep(1) # Check every second

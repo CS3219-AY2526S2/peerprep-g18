@@ -24,8 +24,10 @@ services:
       - ./api-gateway:/app
     depends_on:
       - user-service
+      - redis-sessions
     environment:
       - PYTHONUNBUFFERED=1
+      - REDIS_SESSIONS_HOST=redis-sessions
 
   # ==========
   # The (Internal) Services
@@ -50,6 +52,11 @@ services:
     volumes:
       - ./collaboration-service:/app
       - /app/node_modules
+    depends_on:
+      - redis-sessions
+      - history-service
+    environment:
+      - REDIS_SESSIONS_HOST=redis-sessions
 
   question-service:
     build: ./question-service
@@ -61,13 +68,21 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
 
+  history-service:
+    build: ./history-service
+    container_name: history-service
+    expose:
+      - "6770"
+    volumes:
+      - ./history-service:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+
   matching-service:
     build: ./matching-service
     container_name: matching-service
     expose:
       - "6769"
-    ports:
-      - "6769:6769"
     volumes:
       - ./matching-service:/app
     depends_on:
@@ -79,5 +94,11 @@ services:
   redis-matching:
     image: redis:7-alpine
     container_name: redis-matching
+    expose:
+      - "6379"
+  
+  redis-sessions:
+    image: redis:7-alpine
+    container_name: redis-sessions
     expose:
       - "6379"

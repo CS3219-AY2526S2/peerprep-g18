@@ -11,20 +11,17 @@ app = FastAPI(title="PeerPrep Matching Service")
 
 worker_task = None
 
-app.include_router(match.router)
+app.include_router(match.router, prefix="/matching")
 
 @app.on_event("startup")
 async def startup_event():
     global worker_task
     
-    # Initialize the Redis db
+    # Initialize the Redis matching db
     match_host = os.getenv("REDIS_MATCH_HOST", "redis-matching")
     database.redis_match = redis.Redis(host=match_host, port=6379, decode_responses=True)
 
-    #event_bus_host = os.getenv("REDIS_EVENT_BUS_HOST", "redis-event-bus")
-    #database.redis_pubsub = redis.Redis(host=event_bus_host, port=6379, decode_responses=True)
-
-    print("Connected to all Redis databases!")
+    print("Connected to Redis Matching database!")
     
     # Start the background worker
     worker_task = asyncio.create_task(match_worker())
@@ -36,14 +33,11 @@ async def shutdown_event():
         worker_task.cancel()
     if database.redis_match:
         await database.redis_match.close()
-    #if database.redis_pubsub:
-    #    await database.redis_pubsub.close()
 
 @app.get("/health")
 async def health_check():
     try:
         ping_match = await database.redis_match.ping()
-        #ping_pubsub = await database.redis_pubsub.ping()
-        return {"status": "healthy", "match_db": ping_match, "event_bus": ping_pubsub}
+        return {"status": "healthy", "match_db": ping_match}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}

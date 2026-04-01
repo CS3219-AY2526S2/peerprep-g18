@@ -1,12 +1,7 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { LogOut, User, Users as UsersIcon, Check } from 'lucide-react';
-
-interface DashboardProps {
-  user: any;
-  onStartMatching: (criteria: any) => void;
-  onProfileClick: () => void;
-  onLogout: () => void;
-}
+import { useUser } from '../contexts/UserContext';
 
 const difficulties = [
   { id: 'easy', label: 'Easy', color: 'bg-green-500' },
@@ -29,24 +24,26 @@ const topics = [
   'Greedy Algorithms'
 ];
 
-export function Dashboard({ user, onStartMatching, onProfileClick, onLogout }: DashboardProps) {
+export function Dashboard() {
+  const navigate = useNavigate();
+  const { user, handleLogout } = useUser();
   const [selectedDifficulties, setSelectedDifficulties] = useState<string[]>([]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
-  const [activeUsersCount] = useState(Math.floor(Math.random() * 20) + 5); // Simulate active users
+  const [activeUsersCount] = useState(Math.floor(Math.random() * 20) + 5);
 
   const isAdmin = user.role?.toLowerCase() === 'admin' || user.username === 'Root';
 
   const toggleDifficulty = (diffId: string) => {
-    setSelectedDifficulties(prev => 
-      prev.includes(diffId) 
+    setSelectedDifficulties(prev =>
+      prev.includes(diffId)
         ? prev.filter(d => d !== diffId)
         : [...prev, diffId]
     );
   };
 
   const toggleTopic = (topic: string) => {
-    setSelectedTopics(prev => 
-      prev.includes(topic) 
+    setSelectedTopics(prev =>
+      prev.includes(topic)
         ? prev.filter(t => t !== topic)
         : [...prev, topic]
     );
@@ -54,11 +51,18 @@ export function Dashboard({ user, onStartMatching, onProfileClick, onLogout }: D
 
   const handleStartMatching = () => {
     if (selectedDifficulties.length > 0 && selectedTopics.length > 0) {
-      onStartMatching({
-        difficulties: selectedDifficulties,
-        topics: selectedTopics
+      navigate('/matching', {
+        state: {
+          difficulties: selectedDifficulties,
+          topics: selectedTopics
+        }
       });
     }
+  };
+
+  const onLogout = async () => {
+    await handleLogout();
+    navigate('/', { replace: true });
   };
 
   return (
@@ -86,7 +90,7 @@ export function Dashboard({ user, onStartMatching, onProfileClick, onLogout }: D
           </div>
           <div className="flex gap-3">
             <button
-              onClick={onProfileClick}
+              onClick={() => navigate('/profile')}
               className="bg-[#E8B995] p-3 rounded-full hover:bg-[#F0C5A5] transition-all"
             >
               <User className="w-5 h-5 text-[#4A4563]" />
