@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import { GATEWAY_URL } from '../constants';
 import { auth } from '../firebase';
 
-
 export function MatchingPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -19,7 +18,6 @@ export function MatchingPage() {
   const isTransitioningRef = useRef(false);
 
   useEffect(() => {
-    
     if (!criteria) {
       navigate('/dashboard', { replace: true });
       return;
@@ -51,10 +49,20 @@ export function MatchingPage() {
           const data = await response.json();
           startPolling(data.ticket_id, token);
         } else if (response.status === 400) {
-          alert("You are already in the queue!");
+          toast.error("You are already in the queue!");
           handleCancelClick();
-        } else {
-          throw new Error("Failed to join queue");
+        } else if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          if (response.status === 401 && errData.detail === 'ACCOUNT_DELETED') {
+            window.dispatchEvent(new Event('auth:account_deleted'));
+            return;
+          }
+          if (response.status === 403 && errData.detail === 'TOKEN_STALE') {
+            window.dispatchEvent(new Event('auth:token_stale'));
+            navigate('/admin', { replace: true });
+            return;
+          }
+          throw new Error(errData.detail || `Matching failed: ${response.status}`);
         }
       } catch (err) {
         console.error("Matchmaking error:", err);
@@ -71,15 +79,30 @@ export function MatchingPage() {
             headers: { 'Authorization': `Bearer ${token}` }
           });
 
-          if (res.status === 200) {
-            // match found
+          if (res.status === 401 || res.status === 403) {
+             const errData = await res.json().catch(() => ({}));
+             if (res.status === 401 && errData.detail === 'ACCOUNT_DELETED') {
+               clearInterval(pollingIntervalRef.current!);
+               window.dispatchEvent(new Event('auth:account_deleted'));
+               return;
+             }
+             if (res.status === 403 && errData.detail === 'TOKEN_STALE') {
+               clearInterval(pollingIntervalRef.current!);
+               window.dispatchEvent(new Event('auth:token_stale'));
+               navigate('/admin', { replace: true });
+               return;
+             }
+          }
+
+          if (res.status === 200 && !isTransitioningRef.current) {
+            // MATCH FOUND! Stop polling.
             clearInterval(pollingIntervalRef.current!);
             isTransitioningRef.current = true;
             const matchData = await res.json();
 
             toast.success("Match found! Setting up your room...");
 
-            // Setup Room
+            // Session init
             const initRes = await fetch(`${GATEWAY_URL}/session/init`, {
               method: 'POST',
               headers: {
@@ -97,10 +120,11 @@ export function MatchingPage() {
 
             const initData = await initRes.json();
 
+            // Navigate to the Collaboration Room
             navigate(`/session/${initData.room_id}`, { replace: true });
             
           } else if (res.status === 408) {
-            // User timeout
+            // TIMEOUT FROM BACKEND
             clearInterval(pollingIntervalRef.current!);
             toast.info("No match found. Please try again!");
             navigate('/dashboard', { replace: true });
@@ -109,7 +133,7 @@ export function MatchingPage() {
         } catch (err) {
           console.error("Polling error:", err);
         }
-      }, 1000);
+      }, 1000); // 1 second polling
     };
 
     startMatchmaking();

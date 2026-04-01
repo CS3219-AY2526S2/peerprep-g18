@@ -28,6 +28,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_SESSIONS_HOST=redis-sessions
+      - redis-auth
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_AUTH_HOST=redis-auth
 
   # ==========
   # The (Internal) Services
@@ -39,10 +43,13 @@ services:
       - "6767"
     volumes:
       - ./user-service:/app
+    depends_on:
+      - redis-auth
     env_file:
       - ./user-service/.env # Contains SMTP_EMAIL and SMTP_PASSWORD
     environment:
       - PYTHONUNBUFFERED=1
+      - REDIS_AUTH_HOST=redis-auth
 
   collab-service:
     build: ./collaboration-service
@@ -100,5 +107,12 @@ services:
   redis-sessions:
     image: redis:7-alpine
     container_name: redis-sessions
+    expose:
+      - "6379"
+
+  # Auth invalidation store (deleted users, stale claims after promotion)
+  redis-auth:
+    image: redis:7-alpine
+    container_name: redis-auth
     expose:
       - "6379"

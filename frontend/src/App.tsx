@@ -74,7 +74,17 @@ function ActiveSessionRedirect({ children }: { children: React.ReactNode }) {
         const res = await fetch(`${GATEWAY_URL}/collab/active-session`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (res.ok) {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 401 && data.detail === 'ACCOUNT_DELETED') {
+            window.dispatchEvent(new Event('auth:account_deleted'));
+            return; // UserContext handles logout — don't setChecked
+          }
+          if (res.status === 403 && data.detail === 'TOKEN_STALE') {
+            window.dispatchEvent(new Event('auth:token_stale'));
+            // Fall through to setChecked — UserContext will refresh the token
+          }
+        } else {
           const data = await res.json();
           if (data.sessionId) {
             navigate(`/session/${data.sessionId}`, { replace: true });

@@ -4,11 +4,13 @@
 # Author review: I validated correctness, tested the endpoints, and ensured the business logic aligns with the project backlog. 
 
 import os
+import time
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, EmailStr, Field, model_validator
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
+import redis as redis_sync
 
 import smtplib
 from email.mime.text import MIMEText
@@ -18,6 +20,13 @@ from email.mime.multipart import MIMEMultipart
 cred = credentials.Certificate("firebase-service-account.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+# Redis client for auth invalidation signals (read by the API gateway)
+redis_auth = redis_sync.Redis(
+    host=os.getenv("REDIS_AUTH_HOST", "redis-auth"),
+    port=6379,
+    decode_responses=True
+)
 
 app = FastAPI(title="PeerPrep User Service (Firebase Auth Version)")
 
@@ -237,21 +246,36 @@ def perform_delete(user_id: str):
 
     if doc.exists and doc.to_dict().get("role") == "Root":
         raise HTTPException(status_code=403, detail="The Root admin cannot be deleted")
-    
+
     try:
         auth.delete_user(user_id)
         db.collection('Users').document(user_id).delete()
-        return {"message": f"User {user_id} deleted successfully"}
     except auth.UserNotFoundError:
         raise HTTPException(status_code=404, detail="User not found in Firebase Auth")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    # Revoke all Firebase refresh tokens so the client cannot silently obtain
+    # a new JWT after deletion. This blocks the Firebase-level token refresh.
+    try:
+        auth.revoke_refresh_tokens(user_id)
+    except Exception as e:
+        print(f"Failed to revoke Firebase tokens for {user_id}: {e}")
+
+    # Blacklist the UID in Redis so the API gateway immediately rejects any
+    # still-valid JWT (tokens live up to 1 hour after issuance).
+    # TTL = 3600s covers the full Firebase token lifetime.
+    try:
+        redis_auth.setex(f"invalidated_user:{user_id}", 3600, "1")
+    except Exception as e:
+        print(f"Failed to write invalidated_user to Redis for {user_id}: {e}")
+
+    return {"message": f"User {user_id} deleted successfully"}
+
 
 # --- GET ALL USERS ---
 @app.get("/admin/users")
 def get_all_users(x_user_role: str = Header(None)):
-    # 🔴 FIX: Allow both Admin and Root to view the dashboard
     role_check = x_user_role.strip().lower() if x_user_role else ""
     if role_check not in ["admin", "root"]:
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -268,7 +292,6 @@ def get_all_users(x_user_role: str = Header(None)):
 # --- PROMOTE USER ---
 @app.post("/admin/promote/{target_user_id}")
 def promote_user(target_user_id: str, x_user_role: str = Header(None)):
-    # 🔴 FIX: Allow both Admin and Root to promote users
     role_check = x_user_role.strip().lower() if x_user_role else ""
     if role_check not in ["admin", "root"]:
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -285,5 +308,15 @@ def promote_user(target_user_id: str, x_user_role: str = Header(None)):
         
     doc_ref.update({"role": "Admin"})
     auth.set_custom_user_claims(target_user_id, {'role': "Admin"})
-    
+
+    # Signal the API gateway that any token issued before this moment carries
+    # stale claims (role=User). The gateway compares the token's iat against
+    # this timestamp and returns 403 TOKEN_STALE if the token predates the
+    # promotion, prompting the client to silently refresh its token.
+    # TTL = 3600s covers the full Firebase token lifetime.
+    try:
+        redis_auth.setex(f"stale_claims:{target_user_id}", 3600, str(int(time.time())))
+    except Exception as e:
+        print(f"Failed to write stale_claims to Redis for {target_user_id}: {e}")
+
     return {"message": "User promoted to Admin successfully"}
