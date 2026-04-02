@@ -17,17 +17,11 @@ app.include_router(match.router, prefix="/matching")
 async def startup_event():
     global worker_task
     
-    # Initialize the Redis db
+    # Initialize the Redis matching db
     match_host = os.getenv("REDIS_MATCH_HOST", "redis-matching")
     database.redis_match = redis.Redis(host=match_host, port=6379, decode_responses=True)
 
-    event_bus_host = os.getenv("REDIS_EVENT_BUS_HOST", "redis-event-bus")
-    database.redis_pubsub = redis.Redis(host=event_bus_host, port=6379, decode_responses=True)
-
-    sessions_host = os.getenv("REDIS_SESSIONS_HOST", "redis-sessions")
-    database.redis_sessions = redis.Redis(host=sessions_host, port=6379, decode_responses=True)
-
-    print("Connected to all Redis databases!")
+    print("Connected to Redis Matching database!")
     
     # Start the background worker
     worker_task = asyncio.create_task(match_worker())
@@ -39,17 +33,11 @@ async def shutdown_event():
         worker_task.cancel()
     if database.redis_match:
         await database.redis_match.close()
-    if database.redis_pubsub:
-        await database.redis_pubsub.close()
-    if database.redis_sessions:
-        await database.redis_sessions.close()
 
 @app.get("/health")
 async def health_check():
     try:
         ping_match = await database.redis_match.ping()
-        ping_pubsub = await database.redis_pubsub.ping()
-        ping_sessions = await database.redis_sessions.ping()
-        return {"status": "healthy", "match_db": ping_match, "event_bus": ping_pubsub, "sessions": ping_sessions}
+        return {"status": "healthy", "match_db": ping_match}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
