@@ -2,7 +2,32 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, User, Users as UsersIcon, Check, Loader2 } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
+<<<<<<< ui-fix-question-service
 import { GATEWAY_URL } from '../constants';
+=======
+import { auth } from '../firebase';
+
+const difficulties = [
+  { id: 'easy', label: 'Easy', color: 'bg-green-500' },
+  { id: 'medium', label: 'Medium', color: 'bg-yellow-500' },
+  { id: 'hard', label: 'Hard', color: 'bg-red-500' }
+];
+
+const topics = [
+  'Arrays',
+  'Strings',
+  'Hash Tables',
+  'Linked Lists',
+  'Trees',
+  'Graphs',
+  'Dynamic Programming',
+  'Recursion',
+  'Sorting',
+  'Searching',
+  'Binary Search',
+  'Greedy Algorithms'
+];
+>>>>>>> main
 
 export function Dashboard() {
   const navigate = useNavigate();

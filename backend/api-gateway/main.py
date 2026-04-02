@@ -4,43 +4,44 @@
 # Author review: I validated the proxy logic, tested header injection, and configured the routing table.
 
 import os
+import uuid
+import json
+import asyncio
 from fastapi import FastAPI, Request, HTTPException, Response
-from fastapi.responses import StreamingResponse
 import httpx
+import redis.asyncio as redis
 import firebase_admin
 from firebase_admin import credentials, auth
-import redis.asyncio as aioredis
 
 cred = credentials.Certificate("firebase-service-account.json")
-firebase_admin.initialize_app(cred)
+if not firebase_admin._apps:
+    firebase_admin.initialize_app(cred)
 
 app = FastAPI(title="PeerPrep API Gateway")
 
 http_client = httpx.AsyncClient()
-redis_auth: aioredis.Redis = None  # type: ignore[assignment]
+redis_sessions: redis.Redis = None
+redis_auth: redis.Redis = None
 
 @app.on_event("startup")
 async def startup():
-    global redis_auth
-    redis_auth = aioredis.Redis(
-        host=os.getenv("REDIS_AUTH_HOST", "redis-auth"),
-        port=6379,
-        decode_responses=True
-    )
+    global redis_sessions, redis_auth
+
+    sessions_host = os.getenv("REDIS_SESSIONS_HOST", "redis-sessions")
+    redis_sessions = redis.Redis(host=sessions_host, port=6379, decode_responses=True)
+    print("Gateway connected to Redis Sessions DB!")
+
+    auth_host = os.getenv("REDIS_AUTH_HOST", "redis-auth")
+    redis_auth = redis.Redis(host=auth_host, port=6379, decode_responses=True)
+    print("Gateway connected to Redis Auth DB!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     await http_client.aclose()
+    if redis_sessions:
+        await redis_sessions.close()
     if redis_auth:
-        await redis_auth.aclose()
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+        await redis_auth.close()
 
 # ==========================================
 # MICROSERVICE ROUTING TABLE
@@ -72,7 +73,7 @@ async def verify_token(request: Request):
     except Exception as e:
         print(f"FIREBASE ERROR: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Auth Failed: {str(e)}")
-
+    
     uid = decoded_token.get("uid")
     iat = decoded_token.get("iat", 0)  # Token issued-at timestamp (Unix seconds)
 
@@ -97,37 +98,92 @@ async def verify_token(request: Request):
     return decoded_token
 
 # ==========================================
-# SSE PROXY — must be before the catch-all
+# DISTRIBUTED SESSION INITIALIZATION
 # ==========================================
-# The catch-all buffers the full response body, which breaks SSE streaming.
-# This dedicated route streams the response from matching-service.
-
-@app.get("/matching/events")
-async def proxy_match_events(request: Request):
+@app.post("/session/init")
+async def initialize_collab_session(request: Request):
+    """
+    Both matched users will hit this endpoint simultaneously.
+    We use a Redis SETNX lock to elect a leader to provision the room.
+    Leader will get required details like question
+    """
     decoded = await verify_token(request)
     uid = decoded["uid"]
+    
+    body = await request.json()
+    peer_id = body.get("peer_id")
+    topic = body.get("topic")
+    difficulty = body.get("difficulty")
 
-    forwarded_headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in ["host", "authorization"]
-    }
-    forwarded_headers["X-User-Id"] = uid
+    if not peer_id:
+        raise HTTPException(status_code=400, detail="Missing peer_id")
 
-    async def stream_sse():
-        async with http_client.stream(
-            "GET",
-            "http://matching-service:6769/matching/events",
-            headers=forwarded_headers,
-            timeout=None
-        ) as response:
-            async for chunk in response.aiter_bytes():
-                yield chunk
+    # Create a consistent, alphabetical lock key so both users target the exact same string
+    users = sorted([uid, peer_id])
+    lock_key = f"lock:match:{users[0]}:{users[1]}"
 
-    return StreamingResponse(
-        stream_sse(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    )
+    # Generate a potential Room ID
+    my_generated_room_id = str(uuid.uuid4())
+
+    # The Atomic Race
+    # SETNX returns True if it successfully set the key, False if the key already existed.
+    is_leader = await redis_sessions.setnx(lock_key, my_generated_room_id)
+    
+    # Set a 5s expiration on the lock
+    await redis_sessions.expire(lock_key, 5) 
+
+    if is_leader:
+        # --- LEADER LOGIC ---
+        final_room_id = my_generated_room_id
+        
+        # Fetch question
+        question_id = "1"
+        try:
+            response = await http_client.get(
+                "http://question-service:6768/question/", 
+                params={"topic": topic, "difficulty": difficulty},
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                q_data = response.json()
+                question_id = q_data.get("question_id", question_id)
+        except Exception as e:
+            print(f"Leader failed to fetch question from Question Service: {str(e)}")
+
+        # Write the shared metadata for the Collab Service to use
+        meta_payload = json.dumps({
+            "user1_id": users[0],
+            "user2_id": users[1],
+            "topic": topic,
+            "difficulty": difficulty,
+            "questionId": question_id
+        })
+        
+        # Session expires in 2 hours
+        await redis_sessions.setex(f"session:{final_room_id}:meta", 7200, meta_payload)
+        await redis_sessions.setex(f"active_session:{users[0]}", 7200, final_room_id)
+        await redis_sessions.setex(f"active_session:{users[1]}", 7200, final_room_id)
+        print(f"I am the LEADER. Provisioned room: {final_room_id} with Question: {question_id}")
+
+    else:
+        # --- FOLLOWER LOGIC ---
+        final_room_id = await redis_sessions.get(lock_key)
+        
+        # Briefly poll to ensure the Leader finished writing the meta payload
+        for _ in range(50):
+            meta = await redis_sessions.get(f"session:{final_room_id}:meta")
+            if meta:
+                break
+            await asyncio.sleep(0.2)
+            
+        print(f"I am the FOLLOWER. Joining existing room: {final_room_id}")
+
+    # Both leader and follower return the exact same room_id to the React frontend
+    return {"room_id": final_room_id}
+
+# ==========================================
+# CATCH-ALL PROXY ROUTE
+# ==========================================
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def gateway_proxy(request: Request, path: str):

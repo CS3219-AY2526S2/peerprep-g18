@@ -107,7 +107,7 @@ export function AuthPage() {
               email: formData.email,
               password: formData.password,
               confirm_password: formData.confirmPassword,
-              avatar_id: 1,
+              avatar_id: Math.floor(Math.random() * 9000) + 1000,
               role: "User"
             })
           });

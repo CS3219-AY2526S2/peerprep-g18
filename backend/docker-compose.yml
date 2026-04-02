@@ -24,9 +24,11 @@ services:
       - ./api-gateway:/app
     depends_on:
       - user-service
+      - redis-sessions
       - redis-auth
     environment:
       - PYTHONUNBUFFERED=1
+      - REDIS_SESSIONS_HOST=redis-sessions
       - REDIS_AUTH_HOST=redis-auth
 
   # ==========
@@ -90,13 +92,9 @@ services:
       - ./matching-service:/app
     depends_on:
       - redis-matching    # User queue
-      - redis-event-bus   # To publish event
-      - redis-sessions    # Session creation
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_MATCH_HOST=redis-matching
-      - REDIS_EVENT_BUS_HOST=redis-event-bus
-      - REDIS_SESSIONS_HOST=redis-sessions
   
   redis-matching:
     image: redis:7-alpine
@@ -104,14 +102,6 @@ services:
     expose:
       - "6379"
   
-  # Event bus for communication between API gateway/Matching service
-  redis-event-bus:
-    image: redis:7-alpine
-    container_name: redis-event-bus
-    expose:
-      - "6379"
-
-  # Session + ticket storage for collaboration service
   redis-sessions:
     image: redis:7-alpine
     container_name: redis-sessions

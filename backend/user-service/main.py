@@ -67,6 +67,9 @@ class UserResponse(BaseModel):
     avatar_id: int
     role: str
 
+class AvatarUpdate(BaseModel):
+    avatar_id: int
+
 # =========================
 # HELPER FUNCTIONS
 # =========================
@@ -320,3 +323,18 @@ def promote_user(target_user_id: str, x_user_role: str = Header(None)):
         print(f"Failed to write stale_claims to Redis for {target_user_id}: {e}")
 
     return {"message": "User promoted to Admin successfully"}
+
+
+# --- UPDATE AVATAR ---
+@app.patch("/users/{user_id}/avatar")
+def update_avatar(user_id: str, data: AvatarUpdate, x_user_id: str = Header(...)):
+    """Updates avatar_id for the given user."""
+    if x_user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    doc_ref = db.collection('Users').document(user_id)
+    if not doc_ref.get().exists:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    doc_ref.update({"avatar_id": data.avatar_id})
+    return {"message": "Avatar updated successfully"}

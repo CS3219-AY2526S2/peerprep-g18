@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, X, Users } from 'lucide-react';
-import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { toast } from 'sonner';
 import { GATEWAY_URL } from '../constants';
 import { auth } from '../firebase';
@@ -13,8 +12,10 @@ export function MatchingPage() {
 
   const [elapsedTime, setElapsedTime] = useState(0);
   const [dots, setDots] = useState('');
-  const abortRef = useRef<AbortController | null>(null);
-  const matchedRef = useRef(false);
+  
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const hasRequestedRef = useRef(false);
+  const isTransitioningRef = useRef(false);
 
   useEffect(() => {
     if (!criteria) {
@@ -22,161 +23,163 @@ export function MatchingPage() {
       return;
     }
 
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+    if (hasRequestedRef.current) return;
+    hasRequestedRef.current = true;
 
-    const startMatching = async () => {
+    const startMatchmaking = async () => {
       try {
         const firebaseUser = auth.currentUser;
-        if (!firebaseUser) {
-          navigate('/auth', { replace: true });
-          return;
-        }
+        if (!firebaseUser) throw new Error("Not authenticated");
         const token = await firebaseUser.getIdToken();
 
-        // Wait for SSE to be connected (Redis subscription active) before calling find-pair
-        await new Promise<void>((resolve, reject) => {
-          fetchEventSource(`${GATEWAY_URL}/matching/events`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-            signal: ctrl.signal,
-            openWhenHidden: true,
-            onopen: async (response) => {
-              if (!response.ok) {
-                const data = await response.json().catch(() => ({}));
-                if (response.status === 401 && data.detail === 'ACCOUNT_DELETED') {
-                  ctrl.abort();
-                  window.dispatchEvent(new Event('auth:account_deleted'));
-                  reject(new Error('ACCOUNT_DELETED'));
-                  return;
-                }
-                if (response.status === 403 && data.detail === 'TOKEN_STALE') {
-                  ctrl.abort();
-                  window.dispatchEvent(new Event('auth:token_stale'));
-                  navigate('/admin', { replace: true });
-                  reject(new Error('TOKEN_STALE'));
-                  return;
-                }
-                reject(new Error(`SSE open failed: ${response.status}`));
-              }
-            },
-            onmessage: (event) => {
-              if (matchedRef.current) return;
-
-              if (event.event === 'match_found') {
-                matchedRef.current = true;
-                const data = JSON.parse(event.data);
-                navigate(`/session/${data.sessionId}`, { replace: true });
-              } else if (event.event === 'timeout') {
-                matchedRef.current = true;
-                toast.info('No match found. Try again!');
-                navigate('/dashboard', { replace: true });
-              } else if (event.event === 'connected') {
-                console.log('SSE connected');
-                resolve();
-              }
-            },
-            onerror: (err) => {
-              // Throwing from onerror tells fetchEventSource to stop retrying permanently.
-              // Returning would tell it to retry after backoff, which causes the toast
-              // to loop indefinitely when the account has been deleted.
-              if (ctrl.signal.aborted) throw err;
-              console.error('SSE error:', err);
-              toast.error('Connection lost. Retrying...');
-            }
-          }).catch((err) => {
-            // fetchEventSource rejects when onerror throws.
-            // Forward to the outer Promise only if it was not an intentional abort —
-            // intentional aborts are handled silently by the outer catch block.
-            if (!ctrl.signal.aborted) reject(err);
-          });
-        });
-
-        if (ctrl.signal.aborted) return;
-
-        // SSE is connected — now safe to call find-pair
-        const res = await fetch(`${GATEWAY_URL}/matching/find-pair`, {
+        // Join Queue
+        const response = await fetch(`${GATEWAY_URL}/matching/find-pair`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({
             topic_options: criteria.topics,
             difficulty_options: criteria.difficulties
-          }),
-          signal: ctrl.signal
+          })
         });
 
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          if (res.status === 401 && err.detail === 'ACCOUNT_DELETED') {
-            ctrl.abort();
+        if (response.status === 202) {
+          const data = await response.json();
+          startPolling(data.ticket_id, token);
+        } else if (response.status === 400) {
+          toast.error("You are already in the queue!");
+          handleCancelClick();
+        } else if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          if (response.status === 401 && errData.detail === 'ACCOUNT_DELETED') {
             window.dispatchEvent(new Event('auth:account_deleted'));
             return;
           }
-          if (res.status === 403 && err.detail === 'TOKEN_STALE') {
-            ctrl.abort();
+          if (response.status === 403 && errData.detail === 'TOKEN_STALE') {
             window.dispatchEvent(new Event('auth:token_stale'));
             navigate('/admin', { replace: true });
             return;
           }
-          throw new Error(err.detail || `Matching failed: ${res.status}`);
+          throw new Error(errData.detail || `Matching failed: ${response.status}`);
         }
-      } catch (err: any) {
-        if (ctrl.signal.aborted) return;
-        console.error('Matching error:', err);
-        toast.error(err.message || 'Failed to start matching');
-        navigate('/dashboard', { replace: true });
+      } catch (err) {
+        console.error("Matchmaking error:", err);
+        toast.error("Failed to start matchmaking.");
+        handleCancelClick();
       }
     };
 
-    startMatching();
+    const startPolling = (ticketId: string, token: string) => {
+      // Poll the Status Endpoint every 1 second
+      pollingIntervalRef.current = setInterval(async () => {
+        try {
+          const res = await fetch(`${GATEWAY_URL}/matching/find-pair/status/${ticketId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
 
+          if (res.status === 401 || res.status === 403) {
+             const errData = await res.json().catch(() => ({}));
+             if (res.status === 401 && errData.detail === 'ACCOUNT_DELETED') {
+               clearInterval(pollingIntervalRef.current!);
+               window.dispatchEvent(new Event('auth:account_deleted'));
+               return;
+             }
+             if (res.status === 403 && errData.detail === 'TOKEN_STALE') {
+               clearInterval(pollingIntervalRef.current!);
+               window.dispatchEvent(new Event('auth:token_stale'));
+               navigate('/admin', { replace: true });
+               return;
+             }
+          }
+
+          if (res.status === 200 && !isTransitioningRef.current) {
+            // MATCH FOUND! Stop polling.
+            clearInterval(pollingIntervalRef.current!);
+            isTransitioningRef.current = true;
+            const matchData = await res.json();
+
+            toast.success("Match found! Setting up your room...");
+
+            // Session init
+            const initRes = await fetch(`${GATEWAY_URL}/session/init`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                peer_id: matchData.peer_id,
+                topic: matchData.topic,
+                difficulty: matchData.difficulty
+              })
+            });
+
+            if (!initRes.ok) throw new Error("Failed to initialize session");
+
+            const initData = await initRes.json();
+
+            // Navigate to the Collaboration Room
+            navigate(`/session/${initData.room_id}`, { replace: true });
+            
+          } else if (res.status === 408) {
+            // TIMEOUT FROM BACKEND
+            clearInterval(pollingIntervalRef.current!);
+            toast.info("No match found. Please try again!");
+            navigate('/dashboard', { replace: true });
+          }
+          // If 202, still waiting, let the loop run again
+        } catch (err) {
+          console.error("Polling error:", err);
+        }
+      }, 1000); // 1 second polling
+    };
+
+    startMatchmaking();
+
+    // Cleanup function when component unmounts
     return () => {
-      ctrl.abort();
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
     };
   }, [criteria, navigate]);
 
-  // Cancel handler
-  const handleCancel = async () => {
+  // Manual cancellation
+  const handleCancelClick = async () => {
+    // Stop polling
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+    
+    // Tell backend to delete the ticket
     try {
-      abortRef.current?.abort();
       const firebaseUser = auth.currentUser;
       if (firebaseUser) {
-        const token = await firebaseUser.getIdToken();
-        await fetch(`${GATEWAY_URL}/matching/cancel-pair`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+          const token = await firebaseUser.getIdToken();
+          await fetch(`${GATEWAY_URL}/matching/cancel-pair`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
       }
-    } catch {
-      // ignore cancel errors
+    } catch (err) {
+      console.error("Failed to cancel on backend", err);
     }
+
     navigate('/dashboard', { replace: true });
   };
-
+  
+  // --- Visual Timers ---
   useEffect(() => {
-    const timer = setInterval(() => {
-      setElapsedTime((prev) => prev + 1);
-    }, 1000);
+    const timer = setInterval(() => setElapsedTime((prev) => prev + 1), 1000);
     return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    const dotsTimer = setInterval(() => {
-      setDots((prev) => (prev.length >= 3 ? '' : prev + '.'));
-    }, 500);
+    const dotsTimer = setInterval(() => setDots((prev) => (prev.length >= 3 ? '' : prev + '.')), 500);
     return () => clearInterval(dotsTimer);
   }, []);
-
-  // Auto-timeout after 60 seconds
-  useEffect(() => {
-    if (elapsedTime >= 60 && !matchedRef.current) {
-      matchedRef.current = true;
-      toast.info('No match found after 60 seconds. Returning to dashboard.');
-      handleCancel();
-    }
-  }, [elapsedTime]);
 
   if (!criteria) return null;
 
@@ -185,7 +188,7 @@ export function MatchingPage() {
       <div className="max-w-md w-full">
         <div className="card-purple text-center relative">
           <button
-            onClick={handleCancel}
+            onClick={handleCancelClick}
             className="absolute top-6 right-6 text-gray-400 hover:text-white transition-all"
           >
             <X className="w-6 h-6" />
@@ -233,7 +236,7 @@ export function MatchingPage() {
             We're searching for a peer with matching preferences. This usually takes less than 60 seconds.
           </p>
 
-          <button onClick={handleCancel} className="btn-secondary w-full">
+          <button onClick={handleCancelClick} className="btn-secondary w-full">
             Cancel Search
           </button>
         </div>
