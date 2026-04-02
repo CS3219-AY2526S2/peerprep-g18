@@ -25,12 +25,10 @@ services:
     depends_on:
       - user-service
       - redis-sessions
-    environment:
-      - PYTHONUNBUFFERED=1
-      - REDIS_SESSIONS_HOST=redis-sessions
       - redis-auth
     environment:
       - PYTHONUNBUFFERED=1
+      - REDIS_SESSIONS_HOST=redis-sessions
       - REDIS_AUTH_HOST=redis-auth
 
   # ==========
