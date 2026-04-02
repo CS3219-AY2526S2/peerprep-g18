@@ -12,7 +12,6 @@ import httpx
 import redis.asyncio as redis
 import firebase_admin
 from firebase_admin import credentials, auth
-import redis.asyncio as aioredis
 
 cred = credentials.Certificate("firebase-service-account.json")
 if not firebase_admin._apps:
@@ -21,24 +20,20 @@ if not firebase_admin._apps:
 app = FastAPI(title="PeerPrep API Gateway")
 
 http_client = httpx.AsyncClient()
-redis_sessions = None
+redis_sessions: redis.Redis = None
+redis_auth: redis.Redis = None
 
 @app.on_event("startup")
 async def startup():
-    global redis_sessions
+    global redis_sessions, redis_auth
+
     sessions_host = os.getenv("REDIS_SESSIONS_HOST", "redis-sessions")
     redis_sessions = redis.Redis(host=sessions_host, port=6379, decode_responses=True)
     print("Gateway connected to Redis Sessions DB!")
-redis_auth: aioredis.Redis = None  # type: ignore[assignment]
 
-@app.on_event("startup")
-async def startup():
-    global redis_auth
-    redis_auth = aioredis.Redis(
-        host=os.getenv("REDIS_AUTH_HOST", "redis-auth"),
-        port=6379,
-        decode_responses=True
-    )
+    auth_host = os.getenv("REDIS_AUTH_HOST", "redis-auth")
+    redis_auth = redis.Redis(host=auth_host, port=6379, decode_responses=True)
+    print("Gateway connected to Redis Auth DB!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -46,15 +41,7 @@ async def shutdown_event():
     if redis_sessions:
         await redis_sessions.close()
     if redis_auth:
-        await redis_auth.aclose()
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+        await redis_auth.close()
 
 # ==========================================
 # MICROSERVICE ROUTING TABLE
@@ -86,7 +73,7 @@ async def verify_token(request: Request):
     except Exception as e:
         print(f"FIREBASE ERROR: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Auth Failed: {str(e)}")
-
+    
     uid = decoded_token.get("uid")
     iat = decoded_token.get("iat", 0)  # Token issued-at timestamp (Unix seconds)
 
@@ -142,8 +129,8 @@ async def initialize_collab_session(request: Request):
     # SETNX returns True if it successfully set the key, False if the key already existed.
     is_leader = await redis_sessions.setnx(lock_key, my_generated_room_id)
     
-    # Set a 60s expiration on the lock
-    await redis_sessions.expire(lock_key, 60) 
+    # Set a 5s expiration on the lock
+    await redis_sessions.expire(lock_key, 5) 
 
     if is_leader:
         # --- LEADER LOGIC ---
