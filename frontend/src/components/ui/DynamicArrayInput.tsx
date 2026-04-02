@@ -1,5 +1,5 @@
-import React from 'react';
-import { Plus, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { Plus, X, Eye, EyeOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -10,10 +10,23 @@ interface DynamicArrayInputProps {
   onUpdate?: (newItems: string[]) => void;
   minRows?: number;
   isEditing?: boolean;
+  isSpoiler?: boolean;
   emptyMessage?: string;
+  labelClassName?: string;
 }
 
-export function DynamicArrayInput({label, items, onUpdate, minRows = 2, isEditing = true, emptyMessage = "No content available." }: DynamicArrayInputProps) {
+export function DynamicArrayInput({
+  label, 
+  items, 
+  onUpdate, 
+  minRows = 2, 
+  isEditing = true, 
+  isSpoiler = false,
+  emptyMessage = "No content available.",
+  labelClassName = "text-gray-400"
+}: DynamicArrayInputProps) {
+  const [revealed, setRevealed] = useState<Record<number, boolean>>({});
+
   const hasActualContent = items.some(item => item && item.trim().length > 0);
   const handleAdd = () => onUpdate?.([...items, '']);
   const handleRemove = (index: number) => onUpdate?.(items.filter((_, i) => i !== index));
@@ -23,11 +36,15 @@ export function DynamicArrayInput({label, items, onUpdate, minRows = 2, isEditin
     onUpdate?.(newItems);
   };
 
+  const toggleReveal = (idx: number) => {
+    setRevealed(prev => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
   return (
     <div className="space-y-3">
       {/* Header stays the same */}
       <div className="flex justify-between items-center ml-2">
-        <label className="text-gray-400 text-xs font-bold uppercase tracking-wider">{label}</label>
+        <label className={`${labelClassName} text-xs font-bold uppercase tracking-wider`}>{label}</label>
         {isEditing && (
           <button 
             type="button" 
@@ -65,7 +82,12 @@ export function DynamicArrayInput({label, items, onUpdate, minRows = 2, isEditin
                     onKeyDown={(e) => e.key === 'Enter' && e.stopPropagation()}
                   />
                 ) : (
-                  <div className="w-full pl-10 pr-6 py-3 bg-[#2D2942]/40 rounded-2xl border border-white/5 overflow-hidden">
+                  <div 
+                    className={`w-full pl-10 pr-6 py-3 bg-[#2D2942]/40 rounded-2xl border border-white/5 overflow-hidden transition-all duration-300 ${
+                      isSpoiler && !revealed[idx] ? 'blur-md select-none cursor-pointer' : ''
+                    }`}
+                    onClick={() => isSpoiler && !revealed[idx] && toggleReveal(idx)}
+                  >
                     <div className="prose prose-invert max-w-none text-sm text-white">
                       <ReactMarkdown 
                         remarkPlugins={[remarkMath]} 

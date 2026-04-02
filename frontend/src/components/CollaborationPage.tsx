@@ -16,6 +16,7 @@ import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
 import { avatarUrl } from '../utils/avatar';
+import { DynamicArrayInput } from './ui/DynamicArrayInput';
 
 interface SessionMeta {
   user1_id: string;
@@ -108,15 +109,20 @@ export function CollaborationPage() {
   const [ytext, setYtext] = useState<Y.Text | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const partnerRef = useRef<PartnerInfo | null>(null);
+  const questionRef = useRef<Question | null>(null);
   const partnerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const partnerEndedRef = useRef(false);
   const sessionEndedRef = useRef(false);
   const startedAtRef = useRef<number>(Date.now());
 
-  // Keep partner ref in sync for use in chat socket handlers
+  // Keep refs in sync for use in socket handlers
   useEffect(() => {
     partnerRef.current = partner;
   }, [partner]);
+
+  useEffect(() => {
+    questionRef.current = question;
+  }, [question]);
 
   // --- 3a. Session Data Fetching ---
   useEffect(() => {
@@ -212,6 +218,14 @@ export function CollaborationPage() {
 
         editorSocket.on('yjs-sync', (data: ArrayBuffer) => {
           Y.applyUpdate(ydoc, new Uint8Array(data));
+          
+          // Template initialization: Only if the doc is truly empty after sync
+          // We check a small delay to ensure other potential updates have settled
+          setTimeout(() => {
+            if (ytext.length === 0 && questionRef.current?.template) {
+              ytext.insert(0, questionRef.current.template);
+            }
+          }, 500);
         });
 
         editorSocket.on('yjs-update', (data: ArrayBuffer) => {
@@ -349,10 +363,20 @@ export function CollaborationPage() {
     };
   }, [loading, sessionId, user]);
 
-  // Auto-scroll chat
+  // Auto-scroll chat only when messages change (and not on initial load if possible)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messages.length > 0 && messagesEndRef.current) {
+      const container = messagesEndRef.current.parentElement;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
   }, [messages]);
+
+  // Force scroll to top on initial mount
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
 
   // Session timer
   useEffect(() => {
@@ -409,7 +433,7 @@ export function CollaborationPage() {
 
   // Yjs CodeMirror extensions
   const editorExtensions = ytext
-    ? [python(), dracula, yCollab(ytext)]
+    ? [python(), dracula, yCollab(ytext, null)]
     : [python(), dracula];
 
   if (loading) {
@@ -457,42 +481,58 @@ export function CollaborationPage() {
           <div className="lg:col-span-2 space-y-4 lg:space-y-6">
             {/* Question Panel */}
             {question && (
-              <div className="card-peach">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-[#4A4563] font-bold text-lg">{question.title}</h3>
-                  <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                    question.difficulty?.toLowerCase() === 'easy' ? 'bg-green-100 text-green-700' :
-                    question.difficulty?.toLowerCase() === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
-                  }`}>
-                    {question.difficulty}
-                  </span>
-                </div>
-                <div className="prose prose-sm max-w-none text-gray-700">
-                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                    {question.statement}
-                  </ReactMarkdown>
+              <div className="card-peach space-y-6">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-[#4A4563] font-bold text-xl">{question.title}</h3>
+                    <div className="flex gap-2">
+                       <span className="bg-[#4A4563] text-white px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                        {question.topic}
+                      </span>
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                        question.difficulty?.toLowerCase() === 'easy' ? 'bg-green-100 text-green-700' :
+                        question.difficulty?.toLowerCase() === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-red-100 text-red-700'
+                      }`}>
+                        {question.difficulty}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="text-[#4A4563]/60 text-xs font-bold uppercase tracking-wider ml-1">Problem Statement</label>
+                    <div className="prose prose-invert prose-sm max-w-none text-white bg-[#2D2942]/40 p-6 rounded-[20px] border border-white/5">
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                        {question.statement}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
                 </div>
 
-                {question.examples && question.examples.length > 0 && (
-                  <div className="mt-4">
-                    <h4 className="text-[#4A4563] font-semibold mb-2">Examples</h4>
-                    {question.examples.map((ex, i) => (
-                      <div key={i} className="bg-white/50 rounded-xl p-3 mb-2 text-sm font-mono whitespace-pre-wrap">
-                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{ex}</ReactMarkdown>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {question.constraints && question.constraints.length > 0 && (
-                  <div className="mt-4">
-                    <h4 className="text-[#4A4563] font-semibold mb-2">Constraints</h4>
-                    <ul className="list-disc pl-5 text-sm text-gray-700">
-                      {question.constraints.map((c, i) => <li key={i}>{c}</li>)}
-                    </ul>
-                  </div>
-                )}
+                <div className="space-y-6">
+                  <DynamicArrayInput 
+                    label="Examples" 
+                    items={question.examples?.filter((e: string) => e.trim() !== '') || []}
+                    isEditing={false}
+                    emptyMessage="No examples provided."
+                    labelClassName="text-[#4A4563]/60"
+                  />
+                  <DynamicArrayInput 
+                    label="Constraints" 
+                    items={question.constraints?.filter((c: string) => c.trim() !== '') || []}
+                    isEditing={false}
+                    emptyMessage="No constraints defined."
+                    labelClassName="text-[#4A4563]/60"
+                  />
+                   <DynamicArrayInput 
+                    label="Hints" 
+                    items={question.hints?.filter((h: string) => h.trim() !== '') || []}
+                    isEditing={false}
+                    isSpoiler={true}
+                    emptyMessage="No hints available for this question."
+                    labelClassName="text-[#4A4563]/60"
+                  />
+                </div>
               </div>
             )}
 
