@@ -160,7 +160,7 @@ export function Dashboard() {
           {/* Difficulty Selection */}
           <div className="card-purple">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-white font-bold">Select Difficulty</h3>
+              <h3 className="text-white font-bold">Select Difficulties</h3>
               {selectedDifficulties.length > 0 && (
                 <span className="bg-[#E8B995] text-[#4A4563] text-xs font-semibold px-3 py-1 rounded-full">
                   {selectedDifficulties.length} selected
