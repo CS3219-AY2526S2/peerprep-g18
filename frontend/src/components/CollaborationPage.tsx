@@ -571,7 +571,7 @@ export function CollaborationPage() {
           </div>
 
           {/* Right: Partner + Chat */}
-          <div className="space-y-4 lg:space-y-6">
+          <div className="lg:sticky lg:top-6 space-y-4 lg:space-y-6 self-start">
             {/* Partner Card */}
             <div className="card-peach">
               <h3 className="text-[#4A4563] font-bold mb-4">Your Partner</h3>
