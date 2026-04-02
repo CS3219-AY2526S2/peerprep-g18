@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Edit2, Check, Loader2, AlertTriangle } from 'lucide-react';
+import { toast } from 'sonner';
 import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
+import { AvatarPickerModal } from './ui/AvatarPickerModal';
 
 export function ProfilePage() {
   const navigate = useNavigate();
-  const { user, setUser, handleLogout } = useUser();
+  const { user, setUser, handleLogout, updateAvatar } = useUser();
   const [isEditing, setIsEditing] = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -34,6 +37,28 @@ export function ProfilePage() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [errors, setErrors] = useState<any>({});
   const [successMessage, setSuccessMessage] = useState('');
+
+  const handleAvatarConfirm = async (avatarId: number) => {
+    const firebaseUser = auth.currentUser;
+    if (!firebaseUser) return;
+    const token = await firebaseUser.getIdToken();
+    const res = await fetch(`${GATEWAY_URL}/users/${user.uid || user.UserID}/avatar`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ avatar_id: avatarId })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401 && data.detail === 'ACCOUNT_DELETED') { window.dispatchEvent(new Event('auth:account_deleted')); return; }
+      if (res.status === 403 && data.detail === 'TOKEN_STALE') { window.dispatchEvent(new Event('auth:token_stale')); return; }
+      toast.error('Failed to save avatar.');
+      throw new Error('Avatar update failed');
+    }
+    updateAvatar(avatarId);
+    setShowAvatarPicker(false);
+    setSuccessMessage('Avatar updated successfully!');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
 
   const handleSaveProfile = async () => {
     setIsLoading(true);
@@ -195,7 +220,16 @@ export function ProfilePage() {
           )}
 
           <div className="flex items-center gap-6 mb-8">
-            <img src={user.avatar} alt="Avatar" className="w-24 h-24 rounded-full border-4 border-[#E8B995]" />
+            <button
+              onClick={() => setShowAvatarPicker(true)}
+              className="relative group focus:outline-none flex-shrink-0"
+              aria-label="Change avatar"
+            >
+              <img src={user.avatar} alt="Avatar" className="w-24 h-24 rounded-full border-4 border-[#E8B995]" />
+              <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <Edit2 className="w-6 h-6 text-white" />
+              </div>
+            </button>
             <div>
               <h3 className="text-white font-bold text-xl">@{profileData.username}</h3>
               <p className="text-gray-400">{profileData.email}</p>
@@ -305,6 +339,16 @@ export function ProfilePage() {
 
         <button onClick={onLogout} className="w-full bg-red-500 text-white py-4 rounded-3xl font-bold hover:bg-red-600 transition-colors">Logout of PeerPrep</button>
       </div>
+
+      {showAvatarPicker && (
+        <AvatarPickerModal
+          open={showAvatarPicker}
+          forced={false}
+          currentAvatarId={user.avatar_id ?? 1}
+          onConfirm={handleAvatarConfirm}
+          onCancel={() => setShowAvatarPicker(false)}
+        />
+      )}
     </div>
   );
 }
