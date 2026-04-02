@@ -3,6 +3,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { toast } from 'sonner';
 import { auth } from '../firebase';
 import { GATEWAY_URL } from '../constants';
+import { avatarUrl } from '../utils/avatar';
 
 interface UserContextType {
   user: any;
@@ -26,8 +27,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setUser((prev: any) => ({
       ...prev,
       avatar_id: avatarId,
-      is_new_user: false,
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarId}`
+      avatar: avatarUrl(avatarId)
     }));
   };
 
@@ -59,7 +59,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           setUser({
             ...profileData,
             uid,
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileData.avatar_id}`
+            avatar: avatarUrl(profileData.avatar_id)
           });
           return;
         }

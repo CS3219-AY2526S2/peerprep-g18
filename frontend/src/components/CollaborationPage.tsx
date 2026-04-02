@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
+import { avatarUrl } from '../utils/avatar';
 
 interface SessionMeta {
   user1_id: string;
@@ -536,7 +537,7 @@ export function CollaborationPage() {
               <h3 className="text-[#4A4563] font-bold mb-4">Your Partner</h3>
               <div className="flex items-center gap-3">
                 <img
-                  src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${partner?.avatar_id ?? 1}`}
+                  src={avatarUrl(partner?.avatar_id ?? 1)}
                   alt={partnerUsername}
                   className="w-16 h-16 rounded-full border-2 border-[#4A4563]"
                 />
@@ -556,7 +557,7 @@ export function CollaborationPage() {
                   const isSystem = msg.sender === 'System';
                   const avatarSrc = isOwn
                     ? user.avatar
-                    : `https://api.dicebear.com/7.x/avataaars/svg?seed=${partner?.avatar_id ?? 1}`;
+                    : avatarUrl(partner?.avatar_id ?? 1);
 
                   if (isSystem) {
                     return (

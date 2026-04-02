@@ -1,11 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, User, Users as UsersIcon, Check } from 'lucide-react';
-import { toast } from 'sonner';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
-import { GATEWAY_URL } from '../constants';
-import { AvatarPickerModal } from './AvatarPickerModal';
 
 const difficulties = [
   { id: 'easy', label: 'Easy', color: 'bg-green-500' },
@@ -30,11 +27,10 @@ const topics = [
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const { user, handleLogout, updateAvatar } = useUser();
+  const { user, handleLogout } = useUser();
   const [selectedDifficulties, setSelectedDifficulties] = useState<string[]>([]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [activeUsersCount] = useState(Math.floor(Math.random() * 20) + 5);
-  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
 
   const isAdmin = user.role?.toLowerCase() === 'admin' || user.role?.toLowerCase() === 'root' || user.username === 'Root';
 
@@ -48,31 +44,6 @@ export function Dashboard() {
   }, [isAdmin, navigate]);
 
   if (isAdmin) return null; // prevent flash of user dashboard while redirecting
-
-  // Open avatar picker automatically on first login.
-  useEffect(() => {
-    if (user?.is_new_user) setShowAvatarPicker(true);
-  }, [user?.is_new_user]);
-
-  const handleAvatarConfirm = async (avatarId: number) => {
-    const firebaseUser = auth.currentUser;
-    if (!firebaseUser) return;
-    const token = await firebaseUser.getIdToken();
-    const res = await fetch(`${GATEWAY_URL}/users/${user.uid}/avatar`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ avatar_id: avatarId })
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 401 && data.detail === 'ACCOUNT_DELETED') { window.dispatchEvent(new Event('auth:account_deleted')); return; }
-      if (res.status === 403 && data.detail === 'TOKEN_STALE') { window.dispatchEvent(new Event('auth:token_stale')); return; }
-      toast.error('Failed to save avatar. Please try again.');
-      throw new Error('Avatar update failed');
-    }
-    updateAvatar(avatarId);
-    setShowAvatarPicker(false);
-  };
 
   const toggleDifficulty = (diffId: string) => {
     setSelectedDifficulties(prev =>
@@ -91,7 +62,6 @@ export function Dashboard() {
   };
 
   const handleStartMatching = () => {
-    if (user?.is_new_user) return; // modal blocks UI; guard prevents edge case
     if (selectedDifficulties.length > 0 && selectedTopics.length > 0) {
       navigate('/matching', {
         state: {
@@ -265,15 +235,6 @@ export function Dashboard() {
           </div>
         )}
       </div>
-
-      {showAvatarPicker && (
-        <AvatarPickerModal
-          open={showAvatarPicker}
-          forced={true}
-          currentAvatarId={user.avatar_id ?? 1}
-          onConfirm={handleAvatarConfirm}
-        />
-      )}
 
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {

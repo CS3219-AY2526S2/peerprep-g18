@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Loader2 } from 'lucide-react';
+import { avatarUrl } from '../../utils/avatar';
 
 interface AvatarPickerModalProps {
   open: boolean;
@@ -13,8 +14,6 @@ interface AvatarPickerModalProps {
 
 const GRID_SIZE = 12;
 
-const avatarUrl = (seed: number) =>
-  `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}`;
 
 function generateUniqueSeeds(count: number): number[] {
   const seeds: number[] = [];

@@ -66,7 +66,6 @@ class UserResponse(BaseModel):
     email: EmailStr
     avatar_id: int
     role: str
-    is_new_user: bool = False  # missing field on existing Firestore docs defaults to False
 
 class AvatarUpdate(BaseModel):
     avatar_id: int
@@ -141,8 +140,7 @@ def create_user(user: UserCreate):
         "username": user.username,
         "email": user.email,
         "avatar_id": user.avatar_id,
-        "role": user.role,
-        "is_new_user": True
+        "role": user.role
     }
     
     db.collection('Users').document(user_record.uid).set(user_data)
@@ -330,7 +328,7 @@ def promote_user(target_user_id: str, x_user_role: str = Header(None)):
 # --- UPDATE AVATAR ---
 @app.patch("/users/{user_id}/avatar")
 def update_avatar(user_id: str, data: AvatarUpdate, x_user_id: str = Header(...)):
-    """Updates avatar_id and clears the is_new_user flag for the given user."""
+    """Updates avatar_id for the given user."""
     if x_user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
@@ -338,5 +336,5 @@ def update_avatar(user_id: str, data: AvatarUpdate, x_user_id: str = Header(...)
     if not doc_ref.get().exists:
         raise HTTPException(status_code=404, detail="User not found")
 
-    doc_ref.update({"avatar_id": data.avatar_id, "is_new_user": False})
+    doc_ref.update({"avatar_id": data.avatar_id})
     return {"message": "Avatar updated successfully"}

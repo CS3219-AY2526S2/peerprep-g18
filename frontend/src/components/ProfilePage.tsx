@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
-import { AvatarPickerModal } from './AvatarPickerModal';
+import { AvatarPickerModal } from './ui/AvatarPickerModal';
 
 export function ProfilePage() {
   const navigate = useNavigate();
