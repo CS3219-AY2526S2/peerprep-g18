@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, User, Users as UsersIcon, Check, History } from 'lucide-react';
+import { LogOut, User, Users as UsersIcon, Check } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
 
@@ -101,16 +101,6 @@ export function Dashboard() {
             </div>
           </div>
           <div className="flex gap-3">
-            {/* Button for attempt history */}
-            <button
-              onClick={() => navigate('/history')}
-              title="Attempt History"
-              className="bg-[#3A3552] p-3 rounded-full hover:bg-[#453F5C] transition-all group relative"
-            >
-              <History className="w-5 h-5 text-white group-hover:text-[#E8B995]" />
-              
-            </button>
-
             <button
               onClick={() => navigate('/profile')}
               className="bg-[#E8B995] p-3 rounded-full hover:bg-[#F0C5A5] transition-all"
