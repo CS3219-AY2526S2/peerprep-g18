@@ -1,5 +1,5 @@
 firebase-history-account.json
-
+firebase-historyservice.json
 # Environment Variables (if you use them later for other secrets)
 .env
 .env.local
