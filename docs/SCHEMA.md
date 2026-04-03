@@ -66,6 +66,11 @@ Collection: `session_history` (History Service — Firestore)
 | `questionId` | String | Foreign Key* (M3) |
 | `topic` | String | e.g., “Strings” |
 | `difficulty` | String | e.g., “Easy” |
+| `title` | String | Question title, embedded at session creation |
+| `statement` | String | Full question description |
+| `examples` | Array of Strings | Example inputs/outputs |
+| `constraints` | Array of Strings | Problem constraints |
+| `hints` | Array of Strings | Optional hints |
 | `finalCode` | String | Code snapshot at the time this user left |
 | `startedAt` | Float (Unix timestamp) | Session start time |
 | `endedAt` | Float (Unix timestamp) | Time this user ended/disconnected |
@@ -84,7 +89,7 @@ These keys exist in `redis-sessions` only during an active session and are delet
 
 | Key Pattern | Type | Remarks |
 |---|---|---|
-| `session:{id}:meta` | String (JSON) | Session metadata (user IDs, questionId, topic, difficulty, startedAt). TTL: 2h |
+| `session:{id}:meta` | String (JSON) | Session metadata (user IDs, questionId, topic, difficulty, title, statement, examples, constraints, hints, startedAt). TTL: 2h |
 | `session:{id}:ydoc` | List (base64 strings) | Yjs document update history for replay on reconnect |
 | `session:{id}:finalCode` | String | Plaintext code snapshot, updated on every edit |
 | `session:{id}:chat` | List (JSON strings) | Chat messages. Trimmed to last 500 |
@@ -99,3 +104,4 @@ These keys exist in `redis-sessions` only during an active session and are delet
 - 2026-02-23: Initial schema drafted from D1 planning screenshots.
 - 2026-03-20: Added M4 Session History (Firestore) and Session State (Redis) schemas.
 - 2026-03-21: Updated session_history to per-user entries (`{sessionId}_{submittedBy}`). Added `submittedBy` field and `session:{id}:saved:{uid}` Redis key.
+- 2026-04-03: Added `title`, `statement`, `examples`, `constraints`, `hints` to `session_history` and `session:{id}:meta`. Fields are fetched from Question Service at session creation and embedded to avoid cross-service lookups at read time.
