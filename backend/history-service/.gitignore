@@ -1,5 +1,3 @@
-# Firebase admin credentials
-firebase-historyservice.json
 firebase-history-account.json
 
 # Environment Variables (if you use them later for other secrets)

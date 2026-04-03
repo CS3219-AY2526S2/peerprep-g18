@@ -53,7 +53,6 @@ SERVICES = {
     "question": "http://question-service:6768",
     "matching": "http://matching-service:6769",
     "collab":   "http://collab-service:4000",
-    "history":  "http://history-service:6770",
 }
 
 # Routes that DO NOT require authentication (e.g., login, registration)
