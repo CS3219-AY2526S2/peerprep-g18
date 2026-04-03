@@ -1,7 +1,7 @@
 import random
 from typing import List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, status, Depends
+from fastapi import APIRouter, Header, HTTPException, Query, status, Depends, Body
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
@@ -11,8 +11,6 @@ from app.models.domain import HistoryBase, PaginatedHistory
 # A secure way to get the user-id, ensuring users dont forge this to access others history
 # This code is generated using gemini
 async def get_verified_user_id(x_user_id: str = Header(..., alias="X-User-Id")):
-    # In a real production setup, you could also check for a 'Secret Gateway Key'
-    # here to ensure the request actually came from YOUR gateway.
     if not x_user_id:
         raise HTTPException(status_code=403, detail="Access denied: Missing User ID")
     return x_user_id
@@ -28,7 +26,6 @@ def verify_admin(x_user_role: Optional[str]):
             detail="Admin privileges required"
         )
 
-
 # --- HISTORY ENDPOINTS ---
 @router.post("/", status_code=201)
 async def save_history(payload: HistoryBase):
@@ -37,21 +34,19 @@ async def save_history(payload: HistoryBase):
     submitted_by = payload.submittedBy
     doc_id = f"{session_id}_{submitted_by}" if submitted_by else session_id
     db.collection("session_history").document(doc_id).set(data)
-    return {"detail": "saved"}
 
-# @router.get("/{user_id}", response_model=List[HistoryBase])
-# async def get_history(user_id: str):
-#     docs1 = db.collection("session_history").where("user1Id", "==", user_id).stream()
-#     docs2 = db.collection("session_history").where("user2Id", "==", user_id).stream()
-
-#     combined_results = {}
+    if submitted_by:
+        stats_ref = db.collection("user_stats").document(payload.submittedBy)
+            
+        # This is used for setting metadata about each user, which can potentially be useful for future enhancements
+        stats_ref.set({
+            "used_topics": firestore.ArrayUnion([payload.topic]),
+            "used_difficulties": firestore.ArrayUnion([payload.difficulty]),
+            "total_attempts": firestore.Increment(1),
+            "last_attempt_at": payload.endedAt
+        }, merge=True)
     
-#     for d in docs1:
-#         combined_results[d.id] = d.to_dict()
-#     for d in docs2:
-#         combined_results[d.id] = d.to_dict()
-        
-#     return list(combined_results.values())
+    return {"detail": "saved"}
 
 @router.get("/user", response_model=PaginatedHistory)
 async def get_user_history(
@@ -61,12 +56,9 @@ async def get_user_history(
     topic: Optional[str] = None,
     difficulty: Optional[str] = None
 ):
-
     # For auto saved, check for submitted by == null and one of the user is the userid
     #implement if required
-
-
-
+    
     query = db.collection("session_history").where("submittedBy", "==", user_id)
 
     # Optional Filters
@@ -110,3 +102,20 @@ async def get_history_detail(session_id: str, user_id: str):
         raise HTTPException(status_code=404, detail="History record not found")
         
     return doc.to_dict()
+
+# The below endpoint is used for fetching metadata for a particular user
+@router.get("/filters")
+async def get_history_filters(user_id: str = Depends(get_verified_user_id)):
+    """
+    Instant lookup of unique topics/difficulties from the pre-aggregated doc.
+    """
+    doc_ref = db.collection("user_stats").document(user_id).get()
+    
+    if not doc_ref.exists:
+        return {"topics": [], "difficulties": []}
+    
+    data = doc_ref.to_dict()
+    return {
+        "topics": sorted(data.get("used_topics", [])),
+        "difficulties": sorted(data.get("used_difficulties", []))
+    }
