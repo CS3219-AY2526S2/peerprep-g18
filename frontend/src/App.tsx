@@ -11,6 +11,7 @@ import { AdminPage } from './components/AdminPage';
 import { Toaster } from 'sonner';
 import { GATEWAY_URL } from './constants';
 import { auth } from './firebase';
+import { HistoryPage } from './components/HistoryPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useUser();
@@ -129,6 +130,7 @@ function AppRoutes() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/auth" element={user ? <Navigate to="/dashboard" replace /> : <AuthPage />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
         <Route path="/matching" element={<ProtectedRoute><MatchingPage /></ProtectedRoute>} />
