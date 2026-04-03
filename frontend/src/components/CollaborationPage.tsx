@@ -373,7 +373,18 @@ export function CollaborationPage() {
   // --- 5a. End Session ---
   const handleEndSession = useCallback(async () => {
     sessionEndedRef.current = true;
-    editorSocketRef.current?.emit('end-session');
+    // Emit end-session and wait for server acknowledgement before disconnecting —
+    // otherwise disconnect fires before the event is handled
+    await new Promise<void>((resolve) => {
+      const socket = editorSocketRef.current;
+      if (socket?.connected) {
+        socket.emit('end-session', resolve);
+        // Fallback: disconnect anyway after 2s if server never acknowledges
+        setTimeout(resolve, 2000);
+      } else {
+        resolve();
+      }
+    });
     editorSocketRef.current?.disconnect();
     chatSocketRef.current?.disconnect();
     ydocRef.current?.destroy();
