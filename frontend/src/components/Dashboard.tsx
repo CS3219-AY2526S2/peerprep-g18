@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, User, Users as UsersIcon, Check, History } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
+import { auth } from '../firebase';
 
 const difficulties = [
   { id: 'easy', label: 'Easy', color: 'bg-green-500' },
