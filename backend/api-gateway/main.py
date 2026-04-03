@@ -138,6 +138,11 @@ async def initialize_collab_session(request: Request):
         
         # Fetch question
         question_id = "1"
+        question_title = ""
+        question_statement = ""
+        question_examples = []
+        question_constraints = []
+        question_hints = []
         try:
             response = await http_client.get(
                 "http://question-service:6768/question/", 
@@ -147,6 +152,18 @@ async def initialize_collab_session(request: Request):
             if response.status_code == 200:
                 q_data = response.json()
                 question_id = q_data.get("question_id", question_id)
+                # Fetch full question details using the resolved ID
+                detail_response = await http_client.get(
+                    f"http://question-service:6768/question/{question_id}",
+                    timeout=5.0
+                )
+                if detail_response.status_code == 200:
+                    q_detail = detail_response.json()
+                    question_title = q_detail.get("title", "")
+                    question_statement = q_detail.get("statement", "")
+                    question_examples = q_detail.get("examples", [])
+                    question_constraints = q_detail.get("constraints", [])
+                    question_hints = q_detail.get("hints", [])
         except Exception as e:
             print(f"Leader failed to fetch question from Question Service: {str(e)}")
 
@@ -156,7 +173,12 @@ async def initialize_collab_session(request: Request):
             "user2_id": users[1],
             "topic": topic,
             "difficulty": difficulty,
-            "questionId": question_id
+            "questionId": question_id,
+            "title": question_title,
+            "statement": question_statement,
+            "examples": question_examples,
+            "constraints": question_constraints,
+            "hints": question_hints
         })
         
         # Session expires in 2 hours
