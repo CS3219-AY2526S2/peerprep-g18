@@ -41,7 +41,7 @@ Find a user's email by their username (useful for multi-identifier login).
   - `404 Not Found`: Username does not exist.
 
 #### `PATCH /users/{user_id}`
-Update user profile fields or password.
+Update username or password.
 - **Headers:**
   - `X-User-Id`: (Required) Must match `{user_id}` for authorization.
 - **Request Body (Optional fields):**
@@ -49,14 +49,28 @@ Update user profile fields or password.
   {
     "username": "new_username",
     "password": "new_password",
-    "confirm_password": "new_password",
-    "avatar_id": 2
+    "confirm_password": "new_password"
   }
   ```
 - **Responses:**
   - `200 OK`: Update successful.
   - `403 Forbidden`: `X-User-Id` does not match `{user_id}`.
   - `400 Bad Request`: Username already taken or validation error.
+
+#### `PATCH /users/{user_id}/avatar`
+Update a user's avatar.
+- **Headers:**
+  - `X-User-Id`: (Required) Must match `{user_id}` for authorization.
+- **Request Body:**
+  ```json
+  {
+    "avatar_id": 4271
+  }
+  ```
+- **Responses:**
+  - `200 OK`: `{"message": "Avatar updated successfully"}`
+  - `403 Forbidden`: `X-User-Id` does not match `{user_id}`.
+  - `404 Not Found`: User does not exist.
 
 #### `DELETE /users/{user_id}`
 Permanently delete a user's identity and profile.
@@ -66,6 +80,7 @@ Permanently delete a user's identity and profile.
   - `200 OK`: Deletion successful.
   - `403 Forbidden`: Unauthorized.
   - `404 Not Found`: User does not exist.
+- **Side effects:** Writes `invalidated_user:{user_id}` to `redis-auth`. The API Gateway checks this key on every subsequent request — any token belonging to this user will immediately receive `401 ACCOUNT_DELETED`.
 
 ### Admin Endpoints
 
@@ -85,6 +100,7 @@ Promote a user to Admin role.
   - `200 OK`: Promotion successful.
   - `403 Forbidden`: Not an admin.
   - `404 Not Found`: User does not exist.
+- **Side effects:** Writes `stale_claims:{target_user_id}` (with the current timestamp) to `redis-auth`. The gateway detects this on the promoted user's next request — if their token was issued before the promotion, they receive `403 TOKEN_STALE` and must re-login to get a token with the updated role.
 
 #### `DELETE /admin/users/{user_id}`
 Delete any user account (except Root).
@@ -94,10 +110,88 @@ Delete any user account (except Root).
   - `200 OK`: Deletion successful.
   - `403 Forbidden`: Not an admin or trying to delete Root.
   - `404 Not Found`: User does not exist.
+- **Side effects:** Writes `invalidated_user:{user_id}` to `redis-auth`. Any active token for the deleted user will immediately receive `401 ACCOUNT_DELETED` at the gateway.
 
 ---
 
-## 2. Question Service
+## 2. API Gateway
+**Base URL:** `http://localhost` (externally) / `http://api-gateway:1234` (internally)  
+**Purpose:** Single entry point for all client requests. Verifies Firebase ID tokens, injects user identity headers, and reverse-proxies to the correct microservice.
+
+### Authentication
+
+All routes except the public routes below require an `Authorization: Bearer <firebase_id_token>` header.
+
+On every authenticated request the gateway:
+1. Verifies the token with Firebase Admin SDK.
+2. Checks `redis-auth` for two conditions:
+   - `invalidated_user:{uid}` exists → `401 ACCOUNT_DELETED` (user was deleted by an admin)
+   - `stale_claims:{uid}` timestamp ≥ token `iat` → `403 TOKEN_STALE` (user was promoted after this token was issued — re-login required)
+3. Injects `X-User-Id` and `X-User-Role` headers before forwarding to the upstream service.
+
+If `redis-auth` is unreachable, the checks are skipped (fail-open) and the request proceeds.
+
+### Public Routes (no token required)
+
+| Method | Path | Forwards to |
+|--------|------|-------------|
+| `POST` | `/users` | User Service |
+| `GET` | `/users/lookup/{username}` | User Service |
+
+### Service Routing
+
+| Path prefix | Upstream service |
+|-------------|-----------------|
+| `/users`, `/admin` | `user-service:6767` |
+| `/question` | `question-service:6768` |
+| `/matching` | `matching-service:6769` |
+| `/collab` | `collab-service:4000` |
+
+### Endpoints
+
+#### `POST /session/init`
+Atomically initialises a collaboration session for two matched users. Both users call this endpoint concurrently after a match is found; a Redis SETNX leader election ensures exactly one session is created.
+
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Request Body:**
+  ```json
+  {
+    "peer_id": "firebase_uid_of_partner",
+    "topic": "Arrays",
+    "difficulty": "Easy"
+  }
+  ```
+- **Responses:**
+  - `200 OK`: `{"room_id": "uuid"}` — same `room_id` returned to both users.
+  - `400 Bad Request`: `peer_id` missing from body.
+  - `401 Unauthorized`: Invalid or missing token.
+
+**Leader flow** (first request wins the SETNX):
+1. Fetches a matching question from Question Service (`topic` + `difficulty`).
+2. Writes session metadata to `redis-sessions`:
+   - `session:{room_id}:meta` — JSON blob with `user1_id`, `user2_id`, `topic`, `difficulty`, `questionId` (2 h TTL)
+   - `active_session:{user1_id}` and `active_session:{user2_id}` → `room_id` (2 h TTL)
+
+**Follower flow** (second request sees the key already set):
+1. Reads `room_id` from the existing lock key.
+2. Polls until the leader has finished writing `session:{room_id}:meta` (up to 10 s).
+
+### Common Gateway Error Responses
+
+| Status | `detail` | Meaning |
+|--------|----------|---------|
+| `401` | `Missing Header` | No `Authorization` header |
+| `401` | `Auth Failed: ...` | Firebase token invalid or expired |
+| `401` | `ACCOUNT_DELETED` | User was deleted by an admin |
+| `403` | `TOKEN_STALE` | User was promoted; re-login to refresh claims |
+| `404` | `Service not found` | Path prefix does not map to any service |
+| `503` | `Target service unavailable` | Upstream microservice is unreachable |
+
+---
+
+## 3. Question Service
+
 **Base URL:** `http://question-service:6768/question`  
 **Purpose:** Manages a repository of technical questions categorized by topic and difficulty.
 
@@ -164,7 +258,7 @@ Remove a question from the repository.
 
 ---
 
-## 3. Matching Service
+## 4. Matching Service
 **Base URL:** `http://matching-service:6769`
 **Purpose:** Pairs two users based on overlapping topic and difficulty preferences. Publishes match events via Redis Pub/Sub. Also owns the SSE stream and session creation logic.
 
@@ -210,7 +304,7 @@ Subscribe to Server-Sent Events for match notifications. The API Gateway proxies
 
 ---
 
-## 4. Collaboration Service
+## 5. Collaboration Service
 **Base URL:** `http://collab-service:4000`
 **Purpose:** Real-time collaborative code editing (Yjs CRDT) and chat over Socket.IO. Also serves REST endpoints for session management. Ticket-based authentication — each WebSocket connection requires a one-time ticket obtained via `POST /collab/join`.
 
@@ -374,7 +468,7 @@ Each user gets their own history entry with the code snapshot from when **they**
 
 ---
 
-## 5. History Service
+## 6. History Service
 **Base URL:** `http://history-service:6770`
 **Purpose:** Persists completed session records to Firestore. Called internally by the Collaboration Service (`handleUserEnded` / `handleSessionEnded`) after a session ends — not exposed to the frontend directly.
 

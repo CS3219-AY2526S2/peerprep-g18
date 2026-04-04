@@ -1,4 +1,3 @@
-
 @startuml User Service Sequence Diagram
 !theme plain
 skinparam responseMessageBelowArrow true
@@ -11,6 +10,7 @@ participant "User Service" as US
 database "Firestore" as FS
 participant "Firebase Auth" as FA
 participant "SMTP" as SMTP
+database "redis-auth" as RA
 
 == Register (POST /users) ==
 
@@ -24,8 +24,8 @@ US -> FA: set_custom_claims(uid, role="User")
 US -> FA: generate_email_verification_link(email)
 FA --> US: verification_url
 US -> SMTP: Send verification email
-US -> FS: Store user profile (uid, username, email, role)
-US --> Client: 200 {user_id, username, email, role}
+US -> FS: Store user profile (uid, username, email, avatar_id, role)
+US --> Client: 200 {user_id, username, email, avatar_id, role}
 
 == Login ==
 
@@ -44,7 +44,7 @@ US --> Client: 200 {user profile}
 
 == Update Profile (PATCH /users/{id}) ==
 
-Client -> GW: PATCH /users/{id}\nAuthorization: Bearer <token>\n{username?, avatar_id?, password?}
+Client -> GW: PATCH /users/{id}\nAuthorization: Bearer <token>\n{username?, password?, confirm_password?}
 GW -> FA: verify_id_token(token)
 GW -> US: Forward with X-User-Id header
 US -> US: Check X-User-Id == path id
@@ -60,6 +60,15 @@ end
 US -> FS: Update user document
 US --> Client: 200 "Profile updated"
 
+== Update Avatar (PATCH /users/{id}/avatar) ==
+
+Client -> GW: PATCH /users/{id}/avatar\nAuthorization: Bearer <token>\n{avatar_id}
+GW -> FA: verify_id_token(token)
+GW -> US: Forward with X-User-Id header
+US -> US: Check X-User-Id == path id
+US -> FS: Update avatar_id
+US --> Client: 200 "Avatar updated successfully"
+
 == Delete Account (DELETE /users/{id}) ==
 
 Client -> GW: DELETE /users/{id}\nAuthorization: Bearer <token>
@@ -69,6 +78,7 @@ US -> US: Check X-User-Id == path id
 US -> FS: Get user (check not Root)
 US -> FA: delete_user(uid)
 US -> FS: Delete user document
+US -> RA: SET invalidated_user:{uid}
 US --> Client: 200 "User deleted"
 
 == Admin: Get All Users (GET /admin/users) ==
@@ -89,6 +99,7 @@ US -> US: Verify role is admin/root
 US -> FS: Get user (check not Root)
 US -> FA: delete_user(uid)
 US -> FS: Delete user document
+US -> RA: SET invalidated_user:{uid}
 US --> Client: 200 "User deleted"
 
 == Admin: Promote User (POST /admin/promote/{id}) ==
@@ -100,6 +111,7 @@ US -> US: Verify role is admin/root
 US -> FS: Get user, check current role
 US -> FS: Update role to "Admin"
 US -> FA: set_custom_claims(uid, role="Admin")
-US --> Client: 200 "User promoted"
+US -> RA: SET stale_claims:{uid} = now()
+US --> Client: 200 "User promoted to Admin successfully"
 
 @enduml
