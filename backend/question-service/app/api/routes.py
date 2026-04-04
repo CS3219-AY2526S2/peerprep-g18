@@ -31,9 +31,25 @@ async def create_question(
         x_user_role = x_user_role.strip().lower()
     verify_admin(x_user_role)
 
+    counter_ref = db.collection("metadata").document("question_counter")
     questions_ref = db.collection("questions")
-    docs = questions_ref.order_by("question_id", direction=firestore.Query.DESCENDING).limit(1).get()
-    question_id = int(docs[0].to_dict().get("question_id", 0)) + 1 if docs else 1
+
+    # transaction logic - prevents race condition
+    @firestore.transactional
+    def get_next_id_and_increment(transaction):
+        snapshot = counter_ref.get(transaction=transaction)    
+        # If the counter doc doesn't exist, start at 1 - Not a likely case
+        if not snapshot.exists:
+            new_id = 1
+        else:
+            new_id = snapshot.get("current_id") + 1  
+        # Update the counter in the database
+        transaction.update(counter_ref, {"current_id": new_id})
+        return new_id
+
+    # Execute the transaction to get the unique ID
+    transaction = db.transaction()
+    question_id = get_next_id_and_increment(transaction)
 
     question_dict = question.model_dump()
     question_dict["topic"] = question_dict["topic"].strip().title()
