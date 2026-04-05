@@ -298,7 +298,7 @@ chatNs.on('connection', async (socket) => {
     const message = {
       sender: userId,
       text: sanitizedText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: new Date().toISOString()
     };
 
     await redisClient.rPush(
@@ -323,7 +323,7 @@ chatNs.on('connection', async (socket) => {
           const limitMsg = {
             sender: 'Gemini',
             text: `Sorry, this session has reached the limit of ${MAX_GEMINI_USAGE} Gemini requests.`,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            time: new Date().toISOString()
           };
           chatNs.to(sessionId).emit('receive-message', limitMsg);
           return;
@@ -386,7 +386,7 @@ ${currentCode}
       const aiMessage = {
         sender: 'Gemini',
         text: aiRes.data.response,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: new Date().toISOString()
       };
 
       await redisClient.rPush(`session:${sessionId}:chat`, JSON.stringify(aiMessage));
@@ -396,7 +396,7 @@ ${currentCode}
       chatNs.to(sessionId).emit('receive-message', {
         sender: 'Gemini',
         text: 'Gemini is currently having trouble responding. Please try again later.',
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: new Date().toISOString()
       });
       
       if (REDUCE_USAGE_ON_FAIL) {
