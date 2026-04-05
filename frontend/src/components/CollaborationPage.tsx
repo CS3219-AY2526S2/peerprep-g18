@@ -628,21 +628,21 @@ export function CollaborationPage() {
                         alt={msg.sender}
                         className="w-7 h-7 rounded-full flex-shrink-0"
                       />
-                      <div className={`max-w-[75%] ${
+                      <div className={`max-w-[85%] ${
                         isOwn ? 'bg-[#E8B995] text-[#4A4563]' : 
                         isGemini ? 'bg-indigo-600 text-white' : 'bg-[#4A4563] text-white'
-                      } rounded-2xl px-4 py-2 shadow-lg`}>
+                      } rounded-2xl px-3 py-2 shadow-lg break-words`}>
                         <p className="text-[10px] uppercase font-bold tracking-wider opacity-70 mb-1">
                           {isGemini ? '✨ Gemini AI' : `@${msg.sender}`}
                         </p>
                         {isGemini ? (
-                          <div className="prose prose-invert prose-sm max-w-none text-white leading-relaxed">
+                          <div className="prose prose-invert prose-sm max-w-none text-white leading-relaxed break-words whitespace-pre-wrap">
                             <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                               {msg.text}
                             </ReactMarkdown>
                           </div>
                         ) : (
-                          <p className="text-sm leading-relaxed">{msg.text}</p>
+                          <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>
                         )}
                         <p className="text-[9px] opacity-50 mt-1 text-right">{msg.time}</p>
                       </div>
