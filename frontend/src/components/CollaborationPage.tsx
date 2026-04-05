@@ -325,7 +325,7 @@ export function CollaborationPage() {
             ...msg,
             sender: msg.sender === user.uid
               ? (user.username || user.Username)
-              : (partnerRef.current?.username || 'Partner')
+              : msg.sender === 'Gemini' ? 'Gemini' : (partnerRef.current?.username || 'Partner')
           }));
           setMessages(mapped);
         });
@@ -333,7 +333,7 @@ export function CollaborationPage() {
         chatSocket.on('receive-message', (msg: { sender: string; text: string; time: string }) => {
           const displayName = msg.sender === user.uid
             ? (user.username || user.Username)
-            : (partnerRef.current?.username || 'Partner');
+            : msg.sender === 'Gemini' ? 'Gemini' : (partnerRef.current?.username || 'Partner');
           setMessages(prev => [...prev, { ...msg, sender: displayName }]);
         });
 
@@ -606,9 +606,10 @@ export function CollaborationPage() {
                 {messages.map((msg, index) => {
                   const isOwn = msg.sender === displayUsername;
                   const isSystem = msg.sender === 'System';
+                  const isGemini = msg.sender === 'Gemini';
                   const avatarSrc = isOwn
                     ? user.avatar
-                    : avatarUrl(partner?.avatar_id ?? 1);
+                    : isGemini ? 'https://api.dicebear.com/9.x/bottts/svg?seed=Riley' : avatarUrl(partner?.avatar_id ?? 1);
 
                   if (isSystem) {
                     return (
@@ -627,10 +628,23 @@ export function CollaborationPage() {
                         alt={msg.sender}
                         className="w-7 h-7 rounded-full flex-shrink-0"
                       />
-                      <div className={`max-w-[75%] ${isOwn ? 'bg-[#E8B995] text-[#4A4563]' : 'bg-[#4A4563] text-white'} rounded-2xl px-4 py-2`}>
-                        <p className="text-xs opacity-70 mb-1">@{msg.sender}</p>
-                        <p className="text-sm">{msg.text}</p>
-                        <p className="text-xs opacity-70 mt-1">{msg.time}</p>
+                      <div className={`max-w-[75%] ${
+                        isOwn ? 'bg-[#E8B995] text-[#4A4563]' : 
+                        isGemini ? 'bg-indigo-600 text-white' : 'bg-[#4A4563] text-white'
+                      } rounded-2xl px-4 py-2 shadow-lg`}>
+                        <p className="text-[10px] uppercase font-bold tracking-wider opacity-70 mb-1">
+                          {isGemini ? '✨ Gemini AI' : `@${msg.sender}`}
+                        </p>
+                        {isGemini ? (
+                          <div className="prose prose-invert prose-sm max-w-none text-white leading-relaxed">
+                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {msg.text}
+                            </ReactMarkdown>
+                          </div>
+                        ) : (
+                          <p className="text-sm leading-relaxed">{msg.text}</p>
+                        )}
+                        <p className="text-[9px] opacity-50 mt-1 text-right">{msg.time}</p>
                       </div>
                     </div>
                   );
