@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { createClient } = require('redis');
+const { createAdapter } = require('@socket.io/redis-adapter');
 const Y = require('yjs');
 const axios = require('axios');
 
@@ -23,7 +24,14 @@ const redisClient = createClient({
   socket: { host: process.env.REDIS_SESSIONS_HOST || 'redis-sessions', port: 6379 }
 });
 redisClient.on('error', (err) => console.error('Redis error:', err));
-redisClient.connect().then(() => console.log('Connected to redis-sessions'));
+
+// Redis clients dedicated to Socket.IO adapter (pub/sub)
+const pubClient = createClient({
+  socket: { host: process.env.REDIS_PUBSUB_HOST || 'redis-pubsub', port: 6379 }
+});
+const subClient = pubClient.duplicate();
+pubClient.on('error', (err) => console.error('Redis pubsub pub error:', err));
+subClient.on('error', (err) => console.error('Redis pubsub sub error:', err));
 
 // In-memory session state
 const sessions = new Map();
@@ -99,8 +107,9 @@ editorNs.on('connection', async (socket) => {
   // Check before setting — if an entry exists, this user was here before
   const isReconnect = session.activeSocketIds.has(userId);
 
-  // Register this as the latest socket for the user
+  // Register this as the latest socket for the user (in-memory for same-instance, Redis for cross-instance)
   session.activeSocketIds.set(userId, socket.id);
+  await redisClient.set(`session:${sessionId}:activesocket:${userId}`, socket.id);
 
   // Clear any disconnect timers for this user (they reconnected in time)
   if (session.userDisconnectTimers.has(userId)) {
@@ -220,9 +229,10 @@ editorNs.on('connection', async (socket) => {
 
     const userTimer = setTimeout(async () => {
       session.userDisconnectTimers.delete(userId);
-      const currentSocketId = session.activeSocketIds.get(userId);
+      // Read from Redis so cross-instance reconnects are visible (Instance 2 overwrites this key on reconnect)
+      const currentSocketId = await redisClient.get(`session:${sessionId}:activesocket:${userId}`);
 
-      // If the user reconnected, their active socket ID will differ from the one that disconnected
+      // If the user reconnected (on any instance), their active socket ID will differ from the one that disconnected
       if (currentSocketId !== disconnectingSocketId) {
         console.log(`[timerFired] ${userId} reconnected via new socket (old=${disconnectingSocketId}, new=${currentSocketId}), skipping (session=${sessionId})`);
         return;
@@ -383,7 +393,9 @@ async function handleSessionEnded(sessionId) {
     `session:${sessionId}:ydoc`,
     `session:${sessionId}:chat`,
     `session:${sessionId}:saved:${meta.user1_id}`,
-    `session:${sessionId}:saved:${meta.user2_id}`
+    `session:${sessionId}:saved:${meta.user2_id}`,
+    `session:${sessionId}:activesocket:${meta.user1_id}`,
+    `session:${sessionId}:activesocket:${meta.user2_id}`
   );
   console.log(`[session-cleanup] Redis session keys deleted (session=${sessionId})`);
 
@@ -473,7 +485,24 @@ app.post('/collab/end-session/:sessionId', async (req, res) => {
   res.json({ detail: 'Active session cleared' });
 });
 
-const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
-  console.log(`Collaboration Service running on port ${PORT}`);
+Promise.all([
+  redisClient.connect().then(() => console.log('Connected to redis-sessions')),
+  pubClient.connect(),
+  subClient.connect(),
+]).then(() => {
+  io.adapter(createAdapter(pubClient, subClient));
+  console.log('Socket.IO Redis adapter attached');
+
+  const PORT = process.env.PORT || 4000;
+  server.listen(PORT, () => {
+    console.log(`Collaboration Service running on port ${PORT}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, closing connections...');
+    io.close(() => {
+      console.log('All Socket.IO connections closed');
+      process.exit(0);
+    });
+  });
 });
