@@ -51,7 +51,6 @@ services:
 
   collab-service:
     build: ./collaboration-service
-    container_name: collab-service
     expose:
       - "4000"
     volumes:
@@ -59,9 +58,11 @@ services:
       - /app/node_modules
     depends_on:
       - redis-sessions
+      - redis-pubsub
       - history-service
     environment:
       - REDIS_SESSIONS_HOST=redis-sessions
+      - REDIS_PUBSUB_HOST=redis-pubsub
 
   question-service:
     build: ./question-service
@@ -112,5 +113,12 @@ services:
   redis-auth:
     image: redis:7-alpine
     container_name: redis-auth
+    expose:
+      - "6379"
+
+  # Dedicated pub/sub bus for Socket.IO multi-instance adapter
+  redis-pubsub:
+    image: redis:7-alpine
+    container_name: redis-pubsub
     expose:
       - "6379"
