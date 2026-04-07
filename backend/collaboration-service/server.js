@@ -35,14 +35,6 @@ subClient.on('error', (err) => console.error('Redis pubsub sub error:', err));
 
 // In-memory session state
 const sessions = new Map();
-// sessions.get(sessionId) = {
-//   ydoc: Y.Doc,
-//   connectedEditors: Set<string>,   // userIds currently connected via socket
-//   endedUsers: Set<string>,          // userIds who explicitly ended session
-//   userDisconnectTimers: Map<string, Timeout>,
-//   activeSocketIds: Map<string, string>,
-//   disconnectTimer: Timeout | null
-// }
 
 // Ticket validation middleware
 async function ticketMiddleware(socket, next) {
@@ -124,6 +116,7 @@ editorNs.on('connection', async (socket) => {
   }
 
   session.connectedEditors.add(userId);
+  await redisClient.sAdd(`session:${sessionId}:connectedEditors`, userId);
   console.log(`[connect] ${userId} ${isReconnect ? 'reconnected' : 'connected'} (socket=${socket.id}, session=${sessionId}, editors=${[...session.connectedEditors]})`);
   socket.join(sessionId);
 
@@ -185,16 +178,18 @@ editorNs.on('connection', async (socket) => {
     if (typeof ack === 'function') ack();
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     session.connectedEditors.delete(userId);
+    await redisClient.sRem(`session:${sessionId}:connectedEditors`, userId);
 
     // If the user already explicitly ended, skip the disconnect timer entirely —
     // history is already saved and partner was already notified.
     if (session.endedUsers.has(userId)) {
       console.log(`[disconnect] ${userId} socket closed after explicit end-session, skipping timer (socket=${socket.id}, session=${sessionId})`);
 
-      // Still need to check if session needs cleanup (both users gone)
-      if (session.connectedEditors.size === 0) {
+      // Use Redis sCard — connectedEditors across ALL instances, not just this one
+      const remainingCount = await redisClient.sCard(`session:${sessionId}:connectedEditors`);
+      if (remainingCount === 0) {
         if (session.disconnectTimer) {
           clearTimeout(session.disconnectTimer);
         }
@@ -258,8 +253,9 @@ editorNs.on('connection', async (socket) => {
         editorNs.to(sessionId).emit('partner-ended', { userId });
       }
 
-      // Check if session needs cleanup
-      if (session.connectedEditors.size === 0) {
+      // Use Redis sCard — connectedEditors across ALL instances, not just this one
+      const remainingCount = await redisClient.sCard(`session:${sessionId}:connectedEditors`);
+      if (remainingCount === 0) {
         if (session.disconnectTimer) {
           clearTimeout(session.disconnectTimer);
           console.log(`[cancelTimer] Cleared previous session cleanup timer before setting new one (session=${sessionId})`);
@@ -393,6 +389,7 @@ async function handleSessionEnded(sessionId) {
     `session:${sessionId}:finalCode`,
     `session:${sessionId}:ydoc`,
     `session:${sessionId}:chat`,
+    `session:${sessionId}:connectedEditors`,
     `session:${sessionId}:saved:${meta.user1_id}`,
     `session:${sessionId}:saved:${meta.user2_id}`,
     `session:${sessionId}:activesocket:${meta.user1_id}`,
