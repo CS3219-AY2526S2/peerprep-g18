@@ -77,6 +77,9 @@ async function fetchTicket(sessionId: string): Promise<string> {
       window.dispatchEvent(new Event('auth:token_stale'));
       throw new Error('TOKEN_STALE');
     }
+    if (res.status === 410) {
+      throw new Error('SESSION_ENDED');
+    }
     throw new Error(`Ticket fetch failed: ${res.status}`);
   }
   const data = await res.json();
@@ -146,6 +149,11 @@ export function CollaborationPage() {
           }
           if (sessionRes.status === 403 && errData.detail === 'TOKEN_STALE') {
             window.dispatchEvent(new Event('auth:token_stale'));
+            return;
+          }
+          if (sessionRes.status === 410) {
+            toast.error('This session has ended.');
+            navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
             return;
           }
           throw new Error('Failed to fetch session');
@@ -267,7 +275,12 @@ export function CollaborationPage() {
             editorSocket.io.opts.query = { ticket: newTicket };
             editorSocket.connect();
             toast('Reconnecting editor...');
-          } catch {
+          } catch (err: any) {
+            if (err?.message === 'SESSION_ENDED') {
+              toast.error('This session has ended.');
+              navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
+              return;
+            }
             toast.error('Failed to reconnect editor');
           }
         });
@@ -278,8 +291,13 @@ export function CollaborationPage() {
             editorSocket.emit('yjs-update', update);
           }
         });
-      } catch (err) {
+      } catch (err: any) {
         if (cleaned) return;
+        if (err?.message === 'SESSION_ENDED') {
+          toast.error('This session has ended.');
+          navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
+          return;
+        }
         console.error('Editor connect error:', err);
         toast.error('Failed to connect to editor. Retrying...');
         setTimeout(connectEditor, 3000);
@@ -344,12 +362,18 @@ export function CollaborationPage() {
             if (cleaned || sessionEndedRef.current) return;
             chatSocket.io.opts.query = { ticket: newTicket };
             chatSocket.connect();
-          } catch {
+          } catch (err: any) {
+            if (err?.message === 'SESSION_ENDED') return; // editor handler already redirects
             toast.error('Failed to reconnect chat');
           }
         });
-      } catch (err) {
+      } catch (err: any) {
         if (cleaned) return;
+        if (err?.message === 'SESSION_ENDED') {
+          toast.error('This session has ended.');
+          navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
+          return;
+        }
         console.error('Chat connect error:', err);
         setTimeout(connectChat, 3000);
       }
