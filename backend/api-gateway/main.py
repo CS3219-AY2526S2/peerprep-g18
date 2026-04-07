@@ -151,18 +151,17 @@ async def initialize_collab_session(request: Request):
             print(f"Leader failed to fetch question from Question Service: {str(e)}")
 
         # Write the shared metadata for the Collab Service to use
-        from datetime import datetime, timezone, timedelta
-        sg_time = datetime.now(timezone(timedelta(hours=8))).isoformat()
-        
+        from datetime import datetime, timezone
+        utc_time = datetime.now(timezone.utc).isoformat()
+
         meta_payload = json.dumps({
             "user1_id": users[0],
             "user2_id": users[1],
             "topic": topic,
             "difficulty": difficulty,
             "questionId": question_id,
-            "startedAt": sg_time
-        })
-        
+            "startedAt": utc_time
+        })        
         # Session expires in 2 hours
         await redis_sessions.setex(f"session:{final_room_id}:meta", 7200, meta_payload)
         await redis_sessions.setex(f"active_session:{users[0]}", 7200, final_room_id)

@@ -64,6 +64,18 @@ services:
       - REDIS_SESSIONS_HOST=redis-sessions
       - REDIS_PUBSUB_HOST=redis-pubsub
 
+  ai-service:
+    build: ./ai-service
+    container_name: ai-service
+    expose:
+      - "6771"
+    volumes:
+      - ./ai-service:/app
+    env_file:
+      - ./ai-service/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+
   question-service:
     build: ./question-service
     container_name: question-service

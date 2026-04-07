@@ -7,6 +7,11 @@ const { createAdapter } = require('@socket.io/redis-adapter');
 const Y = require('yjs');
 const axios = require('axios');
 
+// --- CONSTANTS ---
+const MAX_GEMINI_USAGE = 3;
+const MATCHING_SESSION_DURATION = 7200; // 2 hours in seconds
+const REDUCE_USAGE_ON_FAIL = true;      // Allow retry if AI service fails
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -300,7 +305,7 @@ chatNs.on('connection', async (socket) => {
     const message = {
       sender: userId,
       text: sanitizedText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: new Date().toISOString()
     };
 
     await redisClient.rPush(
@@ -310,8 +315,105 @@ chatNs.on('connection', async (socket) => {
     await redisClient.lTrim(`session:${sessionId}:chat`, -500, -1);
 
     chatNs.to(sessionId).emit('receive-message', message);
+
+    // --- GEMINI INTEGRATION (Non-blocking Background Task) ---
+    if (sanitizedText.trim().toLowerCase().startsWith('@gemini')) {
+      const geminiPrompt = sanitizedText.trim().substring(7).trim();
+      if (!geminiPrompt) return;
+
+      // 1. Check Usage Limit (Immediate feedback)
+      const usageKey = `session:${sessionId}:gemini_usage`;
+      redisClient.incr(usageKey).then(async (currentUsage) => {
+        if (currentUsage === 1) await redisClient.expire(usageKey, MATCHING_SESSION_DURATION);
+
+        if (currentUsage > MAX_GEMINI_USAGE) {
+          const limitMsg = {
+            sender: 'Gemini',
+            text: `Sorry, this session has reached the limit of ${MAX_GEMINI_USAGE} Gemini requests.`,
+            time: new Date().toISOString()
+          };
+          chatNs.to(sessionId).emit('receive-message', limitMsg);
+          return;
+        }
+
+        // 2. Trigger Background Processing
+        processGeminiCommand(sessionId, geminiPrompt, usageKey);
+      }).catch(err => console.error('[Gemini] Usage check error:', err));
+    }
   });
 });
+
+/**
+ * Background task to gather context and call the AI service.
+ */
+async function processGeminiCommand(sessionId, prompt, usageKey) {
+  try {
+    // 1. Gather Context
+    const session = sessions.get(sessionId);
+    const currentCode = session ? session.ydoc.getText('code').toString() : '';
+    
+    let questionStatement = 'Not found';
+    const metaRaw = await redisClient.get(`session:${sessionId}:meta`);
+    if (metaRaw) {
+      const meta = JSON.parse(metaRaw);
+      try {
+        const qRes = await axios.get(`http://question-service:6768/question/${meta.questionId}`);
+        questionStatement = qRes.data.statement;
+      } catch (qErr) {
+        console.error('[Gemini] Failed to fetch question statement:', qErr.message);
+      }
+    }
+
+    const contextString = `
+[SYSTEM INSTRUCTION]
+Act as a helpful and concise (imagine you are responding a direct message) technical interview peer. 
+Help the user with their question while considering the code they've written and the problem statement. 
+Keep the response professional and encouraging. Avoid giving the direct solution, but feel free to provide hints, suggestions, or ask guiding questions.
+Try to keep your response within 3-4 sentences to avoid overwhelming the user if possible.
+If the user prompts you with questions outside of the context, feel free to reply that it is outside of your domain.
+
+[PROBLEM STATEMENT]
+${questionStatement}
+
+[CURRENT COLLABORATIVE CODE]
+\`\`\`python
+${currentCode}
+\`\`\`
+
+[USER PROMPT]
+`.trim();
+
+    // 2. Call AI Service
+    try {
+      const aiRes = await axios.post('http://ai-service:6771/generate', {
+        prompt: prompt,
+        context: contextString
+      }, { timeout: 15000 });
+
+      const aiMessage = {
+        sender: 'Gemini',
+        text: aiRes.data.response,
+        time: new Date().toISOString()
+      };
+
+      await redisClient.rPush(`session:${sessionId}:chat`, JSON.stringify(aiMessage));
+      chatNs.to(sessionId).emit('receive-message', aiMessage);
+    } catch (aiErr) {
+      console.error('[Gemini] AI Service call failed:', aiErr.message);
+      chatNs.to(sessionId).emit('receive-message', {
+        sender: 'Gemini',
+        text: 'Gemini is currently having trouble responding. Please try again later.',
+        time: new Date().toISOString()
+      });
+      
+      if (REDUCE_USAGE_ON_FAIL) {
+        await redisClient.decr(usageKey);
+      }
+    }
+  } catch (err) {
+    console.error('[Gemini] Background task error:', err);
+  }
+}
 
 // ==========================================
 // SESSION LIFECYCLE HELPERS (previously in api-gateway)
@@ -351,7 +453,7 @@ async function handleUserEnded(sessionId, userId, finalCode) {
   } else {
     console.log(`[history] active_session for ${userId} already cleared (session=${sessionId})`);
   }
-  await redisClient.set(`session:${sessionId}:saved:${userId}`, '1', { EX: 7200 });
+  await redisClient.set(`session:${sessionId}:saved:${userId}`, '1', { EX: MATCHING_SESSION_DURATION });
 }
 
 async function handleSessionEnded(sessionId) {
