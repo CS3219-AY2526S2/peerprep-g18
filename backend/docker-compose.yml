@@ -11,7 +11,6 @@ services:
       - "80:80"
     depends_on:
       - api-gateway
-      - collab-service
     restart: always
 
   # The Bouncer (Internal)
@@ -24,8 +23,9 @@ services:
       - ./api-gateway:/app
     depends_on:
       - user-service
-      - redis-sessions
-      - redis-auth
+      - question-service
+      - matching-service
+      - collab-service
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_SESSIONS_HOST=redis-sessions
@@ -51,7 +51,6 @@ services:
 
   collab-service:
     build: ./collaboration-service
-    container_name: collab-service
     expose:
       - "4000"
     volumes:
@@ -59,9 +58,11 @@ services:
       - /app/node_modules
     depends_on:
       - redis-sessions
+      - redis-pubsub
       - history-service
     environment:
       - REDIS_SESSIONS_HOST=redis-sessions
+      - REDIS_PUBSUB_HOST=redis-pubsub
 
   question-service:
     build: ./question-service
@@ -112,5 +113,12 @@ services:
   redis-auth:
     image: redis:7-alpine
     container_name: redis-auth
+    expose:
+      - "6379"
+
+  # Dedicated pub/sub bus for Socket.IO multi-instance adapter
+  redis-pubsub:
+    image: redis:7-alpine
+    container_name: redis-pubsub
     expose:
       - "6379"
