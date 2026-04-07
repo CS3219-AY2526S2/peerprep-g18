@@ -224,6 +224,9 @@ editorNs.on('connection', async (socket) => {
     // Capture which socket triggered this disconnect
     const disconnectingSocketId = socket.id;
 
+    // Snapshot code at disconnect time — not after 30s when partner may have kept editing
+    const finalCode = session.ydoc.getText('code').toString();
+
     // Start 30s timer for this user — if they don't reconnect, treat as end-session
     console.log(`[setTimer] Started 30s disconnect timer for ${userId} (disconnectSocket=${disconnectingSocketId}, session=${sessionId})`);
 
@@ -242,8 +245,6 @@ editorNs.on('connection', async (socket) => {
       // before the server processes the end-session socket event)
       const activeSessionVal = await redisClient.get(`active_session:${userId}`);
       const restEndedEarly = activeSessionVal === null || activeSessionVal !== sessionId;
-
-      const finalCode = session.ydoc.getText('code').toString();
       try {
         await handleUserEnded(sessionId, userId, finalCode);
       } catch (err) {
