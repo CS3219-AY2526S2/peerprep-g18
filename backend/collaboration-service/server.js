@@ -94,6 +94,16 @@ editorNs.on('connection', async (socket) => {
   const { userId, sessionId } = socket;
   if (!userId || !sessionId) return socket.disconnect(true);
 
+  const [ended, userEnded] = await Promise.all([
+    redisClient.get(`session:${sessionId}:ended`),
+    redisClient.get(`session:${sessionId}:user_ended:${userId}`)
+  ]);
+  if (ended || userEnded) {
+    console.log(`[connect] Rejecting ${userId} — ${userEnded ? 'user already left' : 'session already ended'} (session=${sessionId})`);
+    socket.emit('session-ended', { message: 'This session has already ended.' });
+    return socket.disconnect(true);
+  }
+
   const session = await getOrCreateSession(sessionId);
 
   // Check before setting — if an entry exists, this user was here before
@@ -169,6 +179,9 @@ editorNs.on('connection', async (socket) => {
       console.error(`[end-session] Failed to save history for ${userId}: ${err.message}`);
     }
 
+    // Permanently block this user from rejoining via /collab/join
+    await redisClient.set(`session:${sessionId}:user_ended:${userId}`, '1', { EX: 7200 });
+
     // Notify remaining users — they get a prompt to continue or leave
     socket.to(sessionId).emit('partner-ended', { userId });
 
@@ -201,6 +214,38 @@ editorNs.on('connection', async (socket) => {
           console.log(`[cleanup] Session ${sessionId} removed from memory`);
         }, 5000);
       }
+      return;
+    }
+
+    // Both users are now gone — end the session immediately for everyone
+    if (session.connectedEditors.size === 0) {
+      for (const [, timer] of session.userDisconnectTimers) {
+        clearTimeout(timer);
+      }
+      session.userDisconnectTimers.clear();
+
+      const finalCode = session.ydoc.getText('code').toString();
+      const usersToEnd = [...session.activeSocketIds.keys()].filter(
+        uid => !session.endedUsers.has(uid)
+      );
+      console.log(`[disconnect] Both users gone, ending session immediately for [${usersToEnd}] (session=${sessionId})`);
+      // Mark session as ended immediately so /collab/join rejects new entries
+      redisClient.set(`session:${sessionId}:ended`, '1', { EX: 300 })
+        .catch(err => console.error(`[disconnect] Failed to set ended flag: ${err.message}`));
+      Promise.all(usersToEnd.map(uid => handleUserEnded(sessionId, uid, finalCode)))
+        .catch(err => console.error(`[disconnect] Failed to save history: ${err.message}`));
+
+      if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
+      session.disconnectTimer = setTimeout(async () => {
+        console.log(`[cleanup] Session cleanup timer fired, cleaning up (session=${sessionId})`);
+        try {
+          await handleSessionEnded(sessionId);
+        } catch (err) {
+          console.error(`[cleanup] Failed to clean up session ${sessionId}: ${err.message}`);
+        }
+        sessions.delete(sessionId);
+        console.log(`[cleanup] Session ${sessionId} removed from memory`);
+      }, 5000);
       return;
     }
 
@@ -246,6 +291,9 @@ editorNs.on('connection', async (socket) => {
         console.log(`[timerFired] ${userId} did not reconnect after 30s, treating as end-session (session=${sessionId})`);
         editorNs.to(sessionId).emit('partner-ended', { userId });
       }
+
+      // Permanently block this user from rejoining via /collab/join
+      await redisClient.set(`session:${sessionId}:user_ended:${userId}`, '1', { EX: 7200 });
 
       // Check if session needs cleanup
       if (session.connectedEditors.size === 0) {
@@ -409,8 +457,13 @@ app.get('/collab/session/:sessionId', async (req, res) => {
   const uid = req.headers['x-user-id'];
   if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
 
-  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  const [raw, ended, userEnded] = await Promise.all([
+    redisClient.get(`session:${sessionId}:meta`),
+    redisClient.get(`session:${sessionId}:ended`),
+    redisClient.get(`session:${sessionId}:user_ended:${uid}`)
+  ]);
   if (!raw) return res.status(404).json({ detail: 'Session not found' });
+  if (ended || userEnded) return res.status(410).json({ detail: 'Session has already ended' });
 
   const meta = JSON.parse(raw);
   if (![meta.user1_id, meta.user2_id].includes(uid)) {
@@ -441,8 +494,14 @@ app.post('/collab/join', async (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) return res.status(400).json({ detail: 'sessionId required' });
 
-  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  const [raw, ended, userEnded] = await Promise.all([
+    redisClient.get(`session:${sessionId}:meta`),
+    redisClient.get(`session:${sessionId}:ended`),
+    redisClient.get(`session:${sessionId}:user_ended:${uid}`)
+  ]);
   if (!raw) return res.status(404).json({ detail: 'Session not found' });
+  if (ended) return res.status(410).json({ detail: 'Session has already ended' });
+  if (userEnded) return res.status(410).json({ detail: 'You have already left this session' });
 
   const meta = JSON.parse(raw);
   if (![meta.user1_id, meta.user2_id].includes(uid)) {
