@@ -310,22 +310,23 @@ editorNs.on('connection', async (socket) => {
       if (session.connectedEditors.size === 0) {
       // Use Redis sCard — connectedEditors across ALL instances, not just this one
       const remainingCount = await redisClient.sCard(`session:${sessionId}:connectedEditors`);
-      if (remainingCount === 0) {
-        if (session.disconnectTimer) {
-          clearTimeout(session.disconnectTimer);
-          console.log(`[cancelTimer] Cleared previous session cleanup timer before setting new one (session=${sessionId})`);
-        }
-        console.log(`[setTimer] Started 5s session cleanup timer (session=${sessionId})`);
-        session.disconnectTimer = setTimeout(async () => {
-          console.log(`[cleanup] Session cleanup timer fired, cleaning up (session=${sessionId})`);
-          try {
-            await handleSessionEnded(sessionId);
-          } catch (err) {
-            console.error(`[cleanup] Failed to clean up session ${sessionId}: ${err.message}`);
+        if (remainingCount === 0) {
+          if (session.disconnectTimer) {
+            clearTimeout(session.disconnectTimer);
+            console.log(`[cancelTimer] Cleared previous session cleanup timer before setting new one (session=${sessionId})`);
           }
-          sessions.delete(sessionId);
-          console.log(`[cleanup] Session ${sessionId} removed from memory`);
-        }, 5000);
+          console.log(`[setTimer] Started 5s session cleanup timer (session=${sessionId})`);
+          session.disconnectTimer = setTimeout(async () => {
+            console.log(`[cleanup] Session cleanup timer fired, cleaning up (session=${sessionId})`);
+            try {
+              await handleSessionEnded(sessionId);
+            } catch (err) {
+              console.error(`[cleanup] Failed to clean up session ${sessionId}: ${err.message}`);
+            }
+            sessions.delete(sessionId);
+            console.log(`[cleanup] Session ${sessionId} removed from memory`);
+          }, 5000);
+        }
       }
     }, 30000);
 
