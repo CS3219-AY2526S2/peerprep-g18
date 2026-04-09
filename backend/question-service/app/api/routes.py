@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import random
 from typing import List, Optional
 
@@ -57,7 +58,7 @@ async def create_question(
 
     
 
-    new_question = {**question_dict, "question_id": question_id}
+    new_question = {**question_dict, "question_id": question_id, "last_modified": datetime.now(timezone.utc)}
 
     # Save to Firestore
     questions_ref.document(str(question_id)).set(new_question, merge=True)
@@ -83,8 +84,13 @@ async def update_question(
             status_code=status.HTTP_404_NOT_FOUND, 
             detail=f"Question with ID {question_id} not found"
         )
+    
+    old_data = doc.to_dict()
+    old_data["question_id"] = question_id 
+    db.collection("questionsLog").add(old_data)
 
     update_data = question_update.model_dump(exclude_unset=True)
+    update_data["last_modified"] = datetime.now(timezone.utc)
 
     # Normalize topic and difficulty if they are being updated
     if "topic" in update_data:
@@ -117,6 +123,9 @@ async def delete_question(
             status_code=status.HTTP_404_NOT_FOUND, 
             detail=f"Question with ID {question_id} not found"
         )
+    old_data = doc.to_dict()
+    old_data["question_id"] = question_id
+    db.collection("questionsLog").add(old_data)
     doc_ref.delete()
 
     return None
@@ -227,19 +236,21 @@ async def read_questions(
         filter=FieldFilter("difficulty", "==", difficulty)
     )
 
-    # fetch only the document IDs
-    docs = query.select([]).stream()
-    doc_ids = [doc.id for doc in docs]
+    docs = list(query.select(["last_modified"]).stream())
 
-    if not doc_ids:
+    if not docs:
         raise HTTPException(
             status_code=404, 
             detail=f"No questions found for {topic} with {difficulty} difficulty"
         )
 
-    randomQuestion_id = random.choice(doc_ids)
-
-    return {"question_id": randomQuestion_id}
+    random_doc = random.choice(docs)
+    question_data = random_doc.to_dict()
+    
+    return {
+        "question_id": random_doc.id,
+        "last_modified": question_data.get("last_modified")
+    }
 
 # @router.get("/brew", status_code=418)
 # async def brew():
@@ -247,23 +258,49 @@ async def read_questions(
 
 # Get specific question by ID
 # This endpoint is expected to be used by question-history service to fetch question details for a given question_id.
-@router.get("/{question_id}", response_model=Question)
-async def read_question(question_id: str):
-    questions_ref = db.collection("questions")
 
-    # Fetch the question
+@router.get("/{question_id}", response_model=Question)
+async def read_question(
+    question_id: str, 
+    start_time: Optional[datetime] = Query(None) # made optional to make it backward compatible with curr implementation of other services
+):
+    questions_ref = db.collection("questions")
     doc_ref = questions_ref.document(question_id)
     doc = doc_ref.get()
 
-    if not doc.exists:
+    if doc.exists:
+        question_data = doc.to_dict()
+        last_mod = question_data.get("last_modified")
+    
+        if not start_time or (last_mod and last_mod <= start_time):
+            question_data["question_id"] = doc.id
+            return question_data
+
+    # This part is purely for backward compatibilty 
+    if not start_time:
         raise HTTPException(
             status_code=404, 
             detail=f"Question not found with ID: {question_id}"
         )
 
-    question_data = doc.to_dict()
+    logs_ref = db.collection("questionsLog")
+    query = (
+        logs_ref.where("question_id", "==", question_id)
+                .where("last_modified", "<=", start_time)
+                .order_by("last_modified", direction=firestore.Query.DESCENDING)
+                .limit(1)
+    )
     
-    # Add the document ID to the returned data for consistency with the Question model
-    question_data["question_id"] = doc.id
+    logs = query.get()
+    
+    if not logs:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Question not found with ID in Logs: {question_id}"
+        )
 
+    log_doc = logs[0]
+    question_data = log_doc.to_dict()
+    question_data["question_id"] = question_id 
+    
     return question_data
