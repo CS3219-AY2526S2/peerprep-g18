@@ -8,6 +8,12 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from app.database import db
 from app.models.domain import HistoryBase, PaginatedHistory
 
+from datetime import datetime, timezone
+import httpx
+
+
+http_client = httpx.AsyncClient()
+
 # A secure way to get the user-id, ensuring users dont forge this to access others history
 # This code is generated using gemini
 async def get_verified_user_id(x_user_id: str = Header(..., alias="X-User-Id")):
@@ -29,24 +35,57 @@ def verify_admin(x_user_role: Optional[str]):
 # --- HISTORY ENDPOINTS ---
 @router.post("/", status_code=201)
 async def save_history(payload: HistoryBase):
-    data = payload.model_dump()
-    session_id = payload.sessionId
-    submitted_by = payload.submittedBy
-    doc_id = f"{session_id}_{submitted_by}" if submitted_by else session_id
-    db.collection("session_history").document(doc_id).set(data)
+    qn_id = payload.questionId
+    start_time_iso = payload.startedAt.isoformat()
 
-    if submitted_by:
-        stats_ref = db.collection("user_stats").document(payload.submittedBy)
+    url = f"http://question-service:6768/question/{qn_id}"
+    params = {"start_time": start_time_iso}
+
+    try:
+        
+        response = await http_client.get(
+            url, 
+            params=params,
+            timeout=5.0
+        )
+        
+        if response.status_code == 200:
+            qn_data = response.json()
             
-        # This is used for setting metadata about each user, which can potentially be useful for future enhancements
-        stats_ref.set({
-            "used_topics": firestore.ArrayUnion([payload.topic]),
-            "used_difficulties": firestore.ArrayUnion([payload.difficulty]),
+            payload.title = qn_data.get("title")
+            payload.topic = qn_data.get("topic")
+            payload.difficulty = qn_data.get("difficulty")
+            payload.statement = qn_data.get("statement") 
+            payload.examples = qn_data.get("examples", [])
+            payload.constraints = qn_data.get("constraints", [])
+            payload.hints = qn_data.get("hints", [])
+            
+        
+
+    except Exception as e:
+        print(f"History Service failed to fetch question: {str(e)}")
+        #Should return here with a failure status code??
+    
+    doc_id = f"{payload.sessionId}_{payload.submittedBy}"
+    db.collection("session_history").document(doc_id).set(payload.model_dump(by_alias=True))
+
+    if payload.submittedBy:
+        stats_ref = db.collection("user_stats").document(payload.submittedBy)
+        
+        stats_update = {
             "total_attempts": firestore.Increment(1),
-            "last_attempt_at": payload.endedAt
-        }, merge=True)
+            "last_attempt_at": payload.endedAt or datetime.now(timezone.utc)
+        }
+
+        if payload.topic:
+            stats_update["used_topics"] = firestore.ArrayUnion([payload.topic])
+        if payload.difficulty:
+            stats_update["used_difficulties"] = firestore.ArrayUnion([payload.difficulty])
+
+        stats_ref.set(stats_update, merge=True)
     
     return {"detail": "saved"}
+    
 
 @router.get("/user", response_model=PaginatedHistory)
 async def get_user_history(
@@ -93,8 +132,8 @@ async def get_user_history(
         "total_items": total_items
     }
 
-@router.get("/detail/{session_id}/{user_id}", response_model=HistoryBase)
-async def get_history_detail(session_id: str, user_id: str):
+@router.get("/detail/{session_id}", response_model=HistoryBase)
+async def get_history_detail(session_id: str, user_id: str = Depends(get_verified_user_id)):
     doc_id = f"{session_id}_{user_id}"
     doc = db.collection("session_history").document(doc_id).get()
     
