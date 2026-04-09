@@ -1,0 +1,88 @@
+@startuml API Gateway Sequence Diagram
+!theme plain
+skinparam responseMessageBelowArrow true
+
+title API Gateway — Sequence Diagram
+
+actor Client
+participant "API Gateway" as GW
+participant "Firebase Auth" as FA
+database "redis-auth" as RA
+database "redis-sessions" as RS
+participant "Question Service" as QS
+participant "Upstream Service" as US
+
+== Token Verification (all protected routes) ==
+
+Client -> GW: Any request\nAuthorization: Bearer <token>
+GW -> FA: verify_id_token(token)
+
+alt Token invalid / expired
+    FA --> GW: Exception
+    GW --> Client: 401 "Auth Failed: ..."
+else Token valid
+    FA --> GW: {uid, role, iat}
+    GW -> RA: EXISTS invalidated_user:{uid}
+    alt User deleted
+        RA --> GW: true
+        GW --> Client: 401 "ACCOUNT_DELETED"
+    else
+        GW -> RA: GET stale_claims:{uid}
+        alt Claims stale (iat <= stale_ts)
+            RA --> GW: timestamp
+            GW --> Client: 403 "TOKEN_STALE"
+        else Checks pass
+            note over GW: Inject X-User-Id and X-User-Role headers\nForward to upstream service
+        end
+    end
+end
+
+note over GW: If redis-auth is unreachable, checks are\nskipped (fail-open) and request proceeds.
+
+== Session Initialisation (POST /session/init) ==
+
+note over Client, RS: Both matched users call this endpoint concurrently.\nLeader election via Redis SETNX ensures one session is created.
+
+Client -> GW: POST /session/init\nAuthorization: Bearer <token>\n{peer_id, topic, difficulty}
+GW -> FA: verify_id_token(token)
+FA --> GW: {uid}
+
+GW -> RS: SETNX lock:match:{userA}:{userB} = <uuid>
+
+alt Leader (SETNX returned true)
+    GW -> RS: EXPIRE lock:match:{userA}:{userB} 5s
+    GW -> QS: GET /question/?topic=...&difficulty=...
+    QS --> GW: {question_id}
+    GW -> RS: SETEX session:{room_id}:meta 7200 {user1,user2,topic,difficulty,questionId}
+    GW -> RS: SETEX active_session:{userA} 7200 {room_id}
+    GW -> RS: SETEX active_session:{userB} 7200 {room_id}
+    GW --> Client: 200 {room_id}
+else Follower (SETNX returned false)
+    GW -> RS: GET lock:match:{userA}:{userB}
+    RS --> GW: room_id
+    loop Poll until meta written (max 10s)
+        GW -> RS: GET session:{room_id}:meta
+        RS --> GW: meta or nil
+    end
+    GW --> Client: 200 {room_id}
+end
+
+== Proxy — Authenticated Request ==
+
+Client -> GW: <METHOD> /<service>/...\nAuthorization: Bearer <token>
+note over GW: Token verified (see above)
+GW -> US: Forward request\nX-User-Id: {uid}\nX-User-Role: {role}\n(Authorization header stripped)
+US --> GW: Response
+note over GW: Strip upstream CORS headers\n(nginx owns CORS for /api/ requests)
+GW --> Client: Upstream response
+
+== Proxy — Public Request ==
+
+note over GW: Public routes: POST /users, GET /users/lookup/{username}
+
+Client -> GW: POST /users OR GET /users/lookup/{username}
+GW -> US: Forward request (no auth headers injected)
+US --> GW: Response
+GW --> Client: Upstream response
+
+@enduml

@@ -16,6 +16,7 @@ import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
 import { avatarUrl } from '../utils/avatar';
+import { DynamicArrayInput } from './ui/DynamicArrayInput';
 
 interface SessionMeta {
   user1_id: string;
@@ -76,6 +77,9 @@ async function fetchTicket(sessionId: string): Promise<string> {
       window.dispatchEvent(new Event('auth:token_stale'));
       throw new Error('TOKEN_STALE');
     }
+    if (res.status === 410) {
+      throw new Error('SESSION_ENDED');
+    }
     throw new Error(`Ticket fetch failed: ${res.status}`);
   }
   const data = await res.json();
@@ -108,15 +112,20 @@ export function CollaborationPage() {
   const [ytext, setYtext] = useState<Y.Text | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const partnerRef = useRef<PartnerInfo | null>(null);
+  const questionRef = useRef<Question | null>(null);
   const partnerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const partnerEndedRef = useRef(false);
   const sessionEndedRef = useRef(false);
   const startedAtRef = useRef<number>(Date.now());
 
-  // Keep partner ref in sync for use in chat socket handlers
+  // Keep refs in sync for use in socket handlers
   useEffect(() => {
     partnerRef.current = partner;
   }, [partner]);
+
+  useEffect(() => {
+    questionRef.current = question;
+  }, [question]);
 
   // --- 3a. Session Data Fetching ---
   useEffect(() => {
@@ -140,6 +149,11 @@ export function CollaborationPage() {
           }
           if (sessionRes.status === 403 && errData.detail === 'TOKEN_STALE') {
             window.dispatchEvent(new Event('auth:token_stale'));
+            return;
+          }
+          if (sessionRes.status === 410) {
+            toast.error('This session has ended.');
+            navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
             return;
           }
           throw new Error('Failed to fetch session');
@@ -212,6 +226,14 @@ export function CollaborationPage() {
 
         editorSocket.on('yjs-sync', (data: ArrayBuffer) => {
           Y.applyUpdate(ydoc, new Uint8Array(data));
+          
+          // Template initialization: Only if the doc is truly empty after sync
+          // We check a small delay to ensure other potential updates have settled
+          setTimeout(() => {
+            if (ytext.length === 0 && questionRef.current?.template) {
+              ytext.insert(0, questionRef.current.template);
+            }
+          }, 500);
         });
 
         editorSocket.on('yjs-update', (data: ArrayBuffer) => {
@@ -253,7 +275,12 @@ export function CollaborationPage() {
             editorSocket.io.opts.query = { ticket: newTicket };
             editorSocket.connect();
             toast('Reconnecting editor...');
-          } catch {
+          } catch (err: any) {
+            if (err?.message === 'SESSION_ENDED') {
+              toast.error('This session has ended.');
+              navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
+              return;
+            }
             toast.error('Failed to reconnect editor');
           }
         });
@@ -264,8 +291,13 @@ export function CollaborationPage() {
             editorSocket.emit('yjs-update', update);
           }
         });
-      } catch (err) {
+      } catch (err: any) {
         if (cleaned) return;
+        if (err?.message === 'SESSION_ENDED') {
+          toast.error('This session has ended.');
+          navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
+          return;
+        }
         console.error('Editor connect error:', err);
         toast.error('Failed to connect to editor. Retrying...');
         setTimeout(connectEditor, 3000);
@@ -311,7 +343,7 @@ export function CollaborationPage() {
             ...msg,
             sender: msg.sender === user.uid
               ? (user.username || user.Username)
-              : (partnerRef.current?.username || 'Partner')
+              : msg.sender === 'Gemini' ? 'Gemini' : (partnerRef.current?.username || 'Partner')
           }));
           setMessages(mapped);
         });
@@ -319,7 +351,7 @@ export function CollaborationPage() {
         chatSocket.on('receive-message', (msg: { sender: string; text: string; time: string }) => {
           const displayName = msg.sender === user.uid
             ? (user.username || user.Username)
-            : (partnerRef.current?.username || 'Partner');
+            : msg.sender === 'Gemini' ? 'Gemini' : (partnerRef.current?.username || 'Partner');
           setMessages(prev => [...prev, { ...msg, sender: displayName }]);
         });
 
@@ -330,12 +362,18 @@ export function CollaborationPage() {
             if (cleaned || sessionEndedRef.current) return;
             chatSocket.io.opts.query = { ticket: newTicket };
             chatSocket.connect();
-          } catch {
+          } catch (err: any) {
+            if (err?.message === 'SESSION_ENDED') return; // editor handler already redirects
             toast.error('Failed to reconnect chat');
           }
         });
-      } catch (err) {
+      } catch (err: any) {
         if (cleaned) return;
+        if (err?.message === 'SESSION_ENDED') {
+          toast.error('This session has ended.');
+          navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
+          return;
+        }
         console.error('Chat connect error:', err);
         setTimeout(connectChat, 3000);
       }
@@ -349,10 +387,20 @@ export function CollaborationPage() {
     };
   }, [loading, sessionId, user]);
 
-  // Auto-scroll chat
+  // Auto-scroll chat only when messages change (and not on initial load if possible)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messages.length > 0 && messagesEndRef.current) {
+      const container = messagesEndRef.current.parentElement;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
   }, [messages]);
+
+  // Force scroll to top on initial mount
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
 
   // Session timer
   useEffect(() => {
@@ -420,7 +468,7 @@ export function CollaborationPage() {
 
   // Yjs CodeMirror extensions
   const editorExtensions = ytext
-    ? [python(), dracula, yCollab(ytext)]
+    ? [python(), dracula, yCollab(ytext, null)]
     : [python(), dracula];
 
   if (loading) {
@@ -468,42 +516,58 @@ export function CollaborationPage() {
           <div className="lg:col-span-2 space-y-4 lg:space-y-6">
             {/* Question Panel */}
             {question && (
-              <div className="card-peach">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-[#4A4563] font-bold text-lg">{question.title}</h3>
-                  <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                    question.difficulty?.toLowerCase() === 'easy' ? 'bg-green-100 text-green-700' :
-                    question.difficulty?.toLowerCase() === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
-                  }`}>
-                    {question.difficulty}
-                  </span>
-                </div>
-                <div className="prose prose-sm max-w-none text-gray-700">
-                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                    {question.statement}
-                  </ReactMarkdown>
+              <div className="card-peach space-y-6">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-[#4A4563] font-bold text-xl">{question.title}</h3>
+                    <div className="flex gap-2">
+                       <span className="bg-[#4A4563] text-white px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                        {question.topic}
+                      </span>
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                        question.difficulty?.toLowerCase() === 'easy' ? 'bg-green-100 text-green-700' :
+                        question.difficulty?.toLowerCase() === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-red-100 text-red-700'
+                      }`}>
+                        {question.difficulty}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="text-[#4A4563]/60 text-xs font-bold uppercase tracking-wider ml-1">Problem Statement</label>
+                    <div className="prose prose-invert prose-sm max-w-none text-white bg-[#2D2942]/40 p-6 rounded-[20px] border border-white/5">
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                        {question.statement}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
                 </div>
 
-                {question.examples && question.examples.length > 0 && (
-                  <div className="mt-4">
-                    <h4 className="text-[#4A4563] font-semibold mb-2">Examples</h4>
-                    {question.examples.map((ex, i) => (
-                      <div key={i} className="bg-white/50 rounded-xl p-3 mb-2 text-sm font-mono whitespace-pre-wrap">
-                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{ex}</ReactMarkdown>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {question.constraints && question.constraints.length > 0 && (
-                  <div className="mt-4">
-                    <h4 className="text-[#4A4563] font-semibold mb-2">Constraints</h4>
-                    <ul className="list-disc pl-5 text-sm text-gray-700">
-                      {question.constraints.map((c, i) => <li key={i}>{c}</li>)}
-                    </ul>
-                  </div>
-                )}
+                <div className="space-y-6">
+                  <DynamicArrayInput 
+                    label="Examples" 
+                    items={question.examples?.filter((e: string) => e.trim() !== '') || []}
+                    isEditing={false}
+                    emptyMessage="No examples provided."
+                    labelClassName="text-[#4A4563]/60"
+                  />
+                  <DynamicArrayInput 
+                    label="Constraints" 
+                    items={question.constraints?.filter((c: string) => c.trim() !== '') || []}
+                    isEditing={false}
+                    emptyMessage="No constraints defined."
+                    labelClassName="text-[#4A4563]/60"
+                  />
+                   <DynamicArrayInput 
+                    label="Hints" 
+                    items={question.hints?.filter((h: string) => h.trim() !== '') || []}
+                    isEditing={false}
+                    isSpoiler={true}
+                    emptyMessage="No hints available for this question."
+                    labelClassName="text-[#4A4563]/60"
+                  />
+                </div>
               </div>
             )}
 
@@ -542,11 +606,11 @@ export function CollaborationPage() {
           </div>
 
           {/* Right: Partner + Chat */}
-          <div className="space-y-4 lg:space-y-6">
+          <div className="lg:sticky lg:top-6 space-y-4 lg:space-y-6 self-start">
             {/* Partner Card */}
             <div className="card-peach">
               <h3 className="text-[#4A4563] font-bold mb-4">Your Partner</h3>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 mb-4">
                 <img
                   src={avatarUrl(partner?.avatar_id ?? 1)}
                   alt={partnerUsername}
@@ -557,18 +621,49 @@ export function CollaborationPage() {
                   <p className={`text-sm ${partnerOnline ? 'text-green-600' : 'text-gray-600'}`}>{partnerStatus}</p>
                 </div>
               </div>
+              <div className="pt-4 border-t border-[#4A4563]/10">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></div>
+                  <p className="text-[#4A4563] text-xs font-bold uppercase tracking-wider">AI Assistant Available</p>
+                </div>
+                <p className="text-[#4A4563]/70 text-[11px] leading-relaxed">
+                  Type <span className="font-bold text-indigo-600">@gemini</span> followed by your question to get hints or code reviews.
+                </p>
+              </div>
             </div>
 
             {/* Chat */}
             <div className="card-purple flex flex-col h-[500px]">
-              <h3 className="text-white font-bold mb-4">Chat</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-white font-bold">Chat</h3>
+                <div className="group relative">
+                  <div className="w-5 h-5 rounded-full border border-gray-400 flex items-center justify-center text-[10px] text-gray-400 cursor-help">?</div>
+                  <div className="absolute right-0 top-6 w-48 bg-[#2D2838] p-3 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none border border-white/10">
+                    <p className="text-[10px] text-gray-300 leading-relaxed">
+                      • Chat with your partner<br/>
+                      • Use <span className="text-[#E8B995]">@gemini</span> for AI help<br/>
+                      • Gemini knows your code & the problem!
+                    </p>
+                  </div>
+                </div>
+              </div>
               <div className="flex-1 bg-[#3A3552] rounded-xl p-4 overflow-y-auto mb-4 custom-scrollbar">
+                {messages.length === 0 && (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-4">
+                    <div className="w-12 h-12 bg-indigo-600/20 rounded-full flex items-center justify-center mb-3">
+                      <span className="text-2xl">✨</span>
+                    </div>
+                    <p className="text-gray-400 text-sm mb-1">Welcome to the session!</p>
+                    <p className="text-gray-500 text-[11px]">Type @gemini for a hint, or say hi to @{partnerUsername}</p>
+                  </div>
+                )}
                 {messages.map((msg, index) => {
                   const isOwn = msg.sender === displayUsername;
                   const isSystem = msg.sender === 'System';
+                  const isGemini = msg.sender === 'Gemini';
                   const avatarSrc = isOwn
                     ? user.avatar
-                    : avatarUrl(partner?.avatar_id ?? 1);
+                    : isGemini ? 'https://api.dicebear.com/9.x/bottts/svg?seed=Riley' : avatarUrl(partner?.avatar_id ?? 1);
 
                   if (isSystem) {
                     return (
@@ -587,28 +682,64 @@ export function CollaborationPage() {
                         alt={msg.sender}
                         className="w-7 h-7 rounded-full flex-shrink-0"
                       />
-                      <div className={`max-w-[75%] ${isOwn ? 'bg-[#E8B995] text-[#4A4563]' : 'bg-[#4A4563] text-white'} rounded-2xl px-4 py-2`}>
-                        <p className="text-xs opacity-70 mb-1">@{msg.sender}</p>
-                        <p className="text-sm">{msg.text}</p>
-                        <p className="text-xs opacity-70 mt-1">{msg.time}</p>
+                      <div className={`max-w-[85%] ${
+                        isOwn ? 'bg-[#E8B995] text-[#4A4563]' : 
+                        isGemini ? 'bg-indigo-600 text-white' : 'bg-[#4A4563] text-white'
+                      } rounded-2xl px-3 py-2 shadow-lg break-words`}>
+                        <p className="text-[10px] uppercase font-bold tracking-wider opacity-70 mb-1">
+                          {isGemini ? '@gemini' : `@${msg.sender}`}
+                        </p>
+                        {isGemini ? (
+                          <div className="prose prose-invert prose-sm max-w-none text-white leading-relaxed break-words whitespace-pre-wrap">
+                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {msg.text}
+                            </ReactMarkdown>
+                          </div>
+                        ) : (
+                          <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>
+                        )}
+                        <p className="text-[9px] opacity-50 mt-1 text-right">
+                          {new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
                       </div>
                     </div>
                   );
                 })}
                 <div ref={messagesEndRef} />
               </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="Type a message..."
-                  className="flex-1 bg-[#3A3552] border-none rounded-full px-5 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#E8B995]"
-                />
-                <button onClick={handleSendMessage} className="bg-[#E8B995] p-3 rounded-full hover:bg-[#F0C5A5] transition-all">
-                  <Send className="w-5 h-5 text-[#4A4563]" />
-                </button>
+              <div className="relative">
+                {newMessage === '@' && (
+                  <div className="absolute bottom-full left-0 mb-2 w-full bg-[#2D2838] rounded-xl p-2 border border-white/10 shadow-2xl animate-in fade-in slide-in-from-bottom-2">
+                    <div className="flex items-center justify-between px-2 py-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs">✨</span>
+                        <span className="text-xs text-white font-bold">@gemini</span>
+                        <span className="text-[10px] text-gray-400 italic">AI Assistant</span>
+                      </div>
+                      <span className="text-[9px] bg-white/10 text-gray-300 px-1.5 py-0.5 rounded uppercase font-bold tracking-tighter">Tab</span>
+                    </div>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Tab' && newMessage === '@') {
+                        e.preventDefault();
+                        setNewMessage('@gemini ');
+                      } else if (e.key === 'Enter') {
+                        handleSendMessage();
+                      }
+                    }}
+                    placeholder="Type a message..."
+                    className="flex-1 bg-[#3A3552] border-none rounded-full px-5 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#E8B995]"
+                  />
+                  <button onClick={handleSendMessage} className="bg-[#E8B995] p-3 rounded-full hover:bg-[#F0C5A5] transition-all">
+                    <Send className="w-5 h-5 text-[#4A4563]" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>

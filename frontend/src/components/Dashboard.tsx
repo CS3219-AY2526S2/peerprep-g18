@@ -1,29 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, User, Users as UsersIcon, Check, History } from 'lucide-react';
+import { LogOut, User, Users as UsersIcon, Check, Loader2, History } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
-import { auth } from '../firebase';
-
-const difficulties = [
-  { id: 'easy', label: 'Easy', color: 'bg-green-500' },
-  { id: 'medium', label: 'Medium', color: 'bg-yellow-500' },
-  { id: 'hard', label: 'Hard', color: 'bg-red-500' }
-];
-
-const topics = [
-  'Arrays',
-  'Strings',
-  'Hash Tables',
-  'Linked Lists',
-  'Trees',
-  'Graphs',
-  'Dynamic Programming',
-  'Recursion',
-  'Sorting',
-  'Searching',
-  'Binary Search',
-  'Greedy Algorithms'
-];
+import { GATEWAY_URL } from '../constants';
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -31,6 +10,10 @@ export function Dashboard() {
   const [selectedDifficulties, setSelectedDifficulties] = useState<string[]>([]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [activeUsersCount] = useState(Math.floor(Math.random() * 20) + 5);
+
+  const [availableTopics, setAvailableTopics] = useState<string[]>([]);
+  const [availableDifficulties, setAvailableDifficulties] = useState<string[]>([]);
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState(true);
 
   const isAdmin = user.role?.toLowerCase() === 'admin' || user.role?.toLowerCase() === 'root' || user.username === 'Root';
 
@@ -43,13 +26,48 @@ export function Dashboard() {
     }
   }, [isAdmin, navigate]);
 
+  useEffect(() => {
+    const fetchMetadata = async () => {
+      try {
+        const token = localStorage.getItem('peerprep_token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+
+        const [topicsRes, diffRes] = await Promise.all([
+          fetch(`${GATEWAY_URL}/question/topics`, { headers }),
+          fetch(`${GATEWAY_URL}/question/difficulties`, { headers })
+        ]);
+
+        if (topicsRes.status === 401 || diffRes.status === 401) {
+          const data = await (topicsRes.status === 401 ? topicsRes : diffRes).clone().json().catch(() => ({}));
+          if (data.detail === 'ACCOUNT_DELETED') {
+            window.dispatchEvent(new Event('auth:account_deleted'));
+            return;
+          }
+        }
+
+        if (topicsRes.ok && diffRes.ok) {
+          setAvailableTopics(await topicsRes.json());
+          setAvailableDifficulties(await diffRes.json());
+        }
+      } catch (err) {
+        console.error("Metadata fetch failed", err);
+      } finally {
+        setIsLoadingMetadata(false);
+      }
+    };
+
+    if (user && !isAdmin) {
+      fetchMetadata();
+    }
+  }, [user, isAdmin]);
+
   if (isAdmin) return null; // prevent flash of user dashboard while redirecting
 
-  const toggleDifficulty = (diffId: string) => {
+  const toggleDifficulty = (diff: string) => {
     setSelectedDifficulties(prev =>
-      prev.includes(diffId)
-        ? prev.filter(d => d !== diffId)
-        : [...prev, diffId]
+      prev.includes(diff)
+        ? prev.filter(d => d !== diff)
+        : [...prev, diff]
     );
   };
 
@@ -152,7 +170,7 @@ export function Dashboard() {
           {/* Difficulty Selection */}
           <div className="card-purple">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-white font-bold">Select Difficulty</h3>
+              <h3 className="text-white font-bold">Select Difficulties</h3>
               {selectedDifficulties.length > 0 && (
                 <span className="bg-[#E8B995] text-[#4A4563] text-xs font-semibold px-3 py-1 rounded-full">
                   {selectedDifficulties.length} selected
@@ -160,28 +178,31 @@ export function Dashboard() {
               )}
             </div>
             <div className="space-y-3">
-              {difficulties.map((diff) => {
-                const isSelected = selectedDifficulties.includes(diff.id);
-                return (
-                  <button
-                    key={diff.id}
-                    onClick={() => toggleDifficulty(diff.id)}
-                    className={`w-full text-left p-4 rounded-2xl transition-all flex items-center justify-between ${
-                      isSelected
-                        ? 'bg-[#E8B995] text-[#4A4563]'
-                        : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full ${diff.color}`}></div>
-                      <span className="font-semibold">{diff.label}</span>
-                    </div>
-                    {isSelected && (
-                      <Check className="w-5 h-5" />
-                    )}
-                  </button>
-                );
-              })}
+              {isLoadingMetadata ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 text-[#E8B995] animate-spin" />
+                </div>
+              ) : (
+                availableDifficulties.map((diff) => {
+                  const isSelected = selectedDifficulties.includes(diff);
+                  return (
+                    <button
+                      key={diff}
+                      onClick={() => toggleDifficulty(diff)}
+                      className={`w-full text-left p-4 rounded-2xl transition-all flex items-center justify-between ${
+                        isSelected
+                          ? 'bg-[#E8B995] text-[#4A4563]'
+                          : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
+                      }`}
+                    >
+                      <span className="font-semibold">{diff}</span>
+                      {isSelected && (
+                        <Check className="w-5 h-5" />
+                      )}
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -196,25 +217,31 @@ export function Dashboard() {
               )}
             </div>
             <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2 custom-scrollbar">
-              {topics.map((topic) => {
-                const isSelected = selectedTopics.includes(topic);
-                return (
-                  <button
-                    key={topic}
-                    onClick={() => toggleTopic(topic)}
-                    className={`w-full text-left p-4 rounded-2xl transition-all flex items-center justify-between ${
-                      isSelected
-                        ? 'bg-[#E8B995] text-[#4A4563]'
-                        : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
-                    }`}
-                  >
-                    <span className="font-semibold">{topic}</span>
-                    {isSelected && (
-                      <Check className="w-5 h-5" />
-                    )}
-                  </button>
-                );
-              })}
+              {isLoadingMetadata ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 text-[#E8B995] animate-spin" />
+                </div>
+              ) : (
+                availableTopics.map((topic) => {
+                  const isSelected = selectedTopics.includes(topic);
+                  return (
+                    <button
+                      key={topic}
+                      onClick={() => toggleTopic(topic)}
+                      className={`w-full text-left p-4 rounded-2xl transition-all flex items-center justify-between ${
+                        isSelected
+                          ? 'bg-[#E8B995] text-[#4A4563]'
+                          : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
+                      }`}
+                    >
+                      <span className="font-semibold">{topic}</span>
+                      {isSelected && (
+                        <Check className="w-5 h-5" />
+                      )}
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
@@ -222,9 +249,9 @@ export function Dashboard() {
         {/* Start Button */}
         <button
           onClick={handleStartMatching}
-          disabled={selectedDifficulties.length === 0 || selectedTopics.length === 0}
+          disabled={selectedDifficulties.length === 0 || selectedTopics.length === 0 || isLoadingMetadata}
           className={`w-full btn-secondary text-xl py-5 ${
-            selectedDifficulties.length === 0 || selectedTopics.length === 0
+            selectedDifficulties.length === 0 || selectedTopics.length === 0 || isLoadingMetadata
               ? 'opacity-50 cursor-not-allowed'
               : ''
           }`}
@@ -237,9 +264,9 @@ export function Dashboard() {
           <div className="mt-6 text-center">
             <p className="text-gray-600">
               {selectedDifficulties.length > 0 && selectedTopics.length > 0
-                ? `Matching with: ${selectedDifficulties.map(d => d.charAt(0).toUpperCase() + d.slice(1)).join(', ')} difficulty • ${selectedTopics.join(', ')}`
+                ? `Matching with: ${selectedDifficulties.join(', ')} difficulty • ${selectedTopics.join(', ')}`
                 : selectedDifficulties.length > 0
-                ? `Selected difficulties: ${selectedDifficulties.map(d => d.charAt(0).toUpperCase() + d.slice(1)).join(', ')}`
+                ? `Selected difficulties: ${selectedDifficulties.join(', ')}`
                 : `Selected topics: ${selectedTopics.join(', ')}`}
             </p>
           </div>

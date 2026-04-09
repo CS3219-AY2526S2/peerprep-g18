@@ -7,144 +7,134 @@ skinparam ParticipantPadding 20
 actor "User A" as UA
 actor "User B" as UB
 participant "Nginx" as NX
-box "API Gateway (Auth Proxy)" #LightYellow
-    participant "Gateway A\n(SSE proxy)" as GWA
-    participant "Gateway B\n(SSE proxy)" as GWB
+box "API Gateway (Auth + Orchestrator)" #LightYellow
+    participant "Gateway" as GW
 end box
 box "Matching Service" #LightBlue
-    participant "SSE Handler A" as MSA
-    participant "SSE Handler B" as MSB
     participant "Match Router" as MS
+    participant "Match Worker" as MW
 end box
 participant "Question Service" as QS
-participant "Collab Service\n(Socket.IO + REST)" as Collab
-database "Redis\n(Event Bus)" as RE
-database "Redis\n(Sessions)" as RS
+participant "Collab Service" as Collab
+database "Redis\n(Matching DB)" as RM
+database "Redis\n(Sessions DB)" as RS
 
-== Phase 1: Matching + SSE Stream ==
+== Phase 1: Matching (Polling-based) ==
 
-UA -> NX: GET /api/matching/events (JWT_A)
-NX -> GWA: Forward (strip /api)
-GWA -> GWA: Verify JWT_A (extract uid_A)
-GWA -> MSA: Stream proxy (X-User-Id: uid_A)\nGET /matching/events
-MSA -> RE: SUBSCRIBE match_events:{uid_A}
-MSA --> GWA: SSE stream\nevent: connected
-GWA --> UA: SSE stream opened\nevent: connected
+UA -> NX: POST /api/matching/find-pair (JWT_A, criteria)
+NX -> GW: Forward (strip /api)
+GW -> GW: Verify JWT_A (uid_A)
+GW -> MS: POST /matching/find-pair (X-User-Id: uid_A)
+MS -> RM: LPUSH incoming_match_queue {uid_A, ticket_id_A, ...}
+MS --> GW: 202 Accepted {ticket_id_A, poll_url}
+GW --> UA: 202 Accepted {ticket_id_A, poll_url}
 
-UB -> NX: GET /api/matching/events (JWT_B)
-NX -> GWB: Forward (strip /api)
-GWB -> GWB: Verify JWT_B (extract uid_B)
-GWB -> MSB: Stream proxy (X-User-Id: uid_B)\nGET /matching/events
-MSB -> RE: SUBSCRIBE match_events:{uid_B}
-MSB --> GWB: SSE stream\nevent: connected
-GWB --> UB: SSE stream opened\nevent: connected
+note over UA, MS: User A attempts to poll for status, but match not found yet
 
-UA -> NX: POST /api/matching/find-pair\n(criteria, JWT_A)
-NX -> GWA: Forward
-GWA -> MS: POST /find-pair (X-User-Id: uid_A)
+UA -> NX: GET /api/matching/find-pair/status/{ticket_id_A}
+NX -> GW: Forward
+GW -> MS: GET /matching/find-pair/status/{ticket_id_A}
+MS -> RM: GET match_result:{ticket_id_A}
+RM --> MS: null
+MS --> GW: 202 Accepted (pending)
+GW --> UA: 202 Accepted (pending)
 
-UB -> NX: POST /api/matching/find-pair\n(criteria, JWT_B)
-NX -> GWB: Forward
-GWB -> MS: POST /find-pair (X-User-Id: uid_B)
+note over UA, MS: User B joins the queue some time later...
 
-... Both users in queue ...
+UB -> NX: POST /api/matching/find-pair (JWT_B, criteria)
+NX -> GW: Forward
+GW -> MS: POST /matching/find-pair (X-User-Id: uid_B)
+MS -> RM: LPUSH incoming_match_queue {uid_B, ticket_id_B, ...}
+MS --> GW: 202 Accepted {ticket_id_B}
+GW --> UB: 202 Accepted {ticket_id_B}
 
-MS -> RE: PUBLISH match_events:{uid_A}\n{event:"match", user1_id, user2_id,\ntopic, difficulty, matched_at}
-MS -> RE: PUBLISH match_events:{uid_B}\n{same payload}
+MW -> RM: BRPOP incoming_match_queue
+RM --> MW: {uid_B, ...}
+MW -> MW: Match Found (UA & UB)
+MW -> RM: SETEX match_result:{ticket_id_A} {status: success, peer_id: uid_B, ...}
+MW -> RM: SETEX match_result:{ticket_id_B} {status: success, peer_id: uid_A, ...}
 
-== Phase 2: Distributed Session Initialization (inside Matching Service) ==
+UA -> NX: GET /api/matching/find-pair/status/{ticket_id_A}
+NX -> GW: Forward
+GW -> MS: GET /matching/find-pair/status/{ticket_id_A}
+MS -> RM: GET match_result:{ticket_id_A}
+RM --> MS: {status: success, peer_id: uid_B, ...}
+MS --> GW: 200 OK {match_data}
+GW --> UA: 200 OK {match_data}
 
-RE -->> MSA: [Message Received]
-RE -->> MSB: [Message Received]
+UB -> NX: GET /api/matching/find-pair/status/{ticket_id_B}
+NX -> GW: Forward
+GW -> MS: GET /matching/find-pair/status/{ticket_id_B}
+MS -> RM: GET match_result:{ticket_id_B}
+RM --> MS: {status: success, peer_id: uid_A, ...}
+MS --> GW: 200 OK {match_data}
+GW --> UB: 200 OK {match_data}
 
-MSA -> MSA: create_or_join_session()\nGenerate sessionId_A
-MSB -> MSB: create_or_join_session()\nGenerate sessionId_B
+== Phase 2: Distributed Session Initialization (API Gateway) ==
 
-note over MSA, MSB
-  Atomic Race: lock_key = lock:match:{match_id}
-  where match_id = sorted_uids:topic:difficulty:matched_at
-  First SETNX wins; that handler becomes the leader.
+note over UA, GW
+  Both matched users simultaneously hit the Gateway's /session/init endpoint.
+  The Gateway uses a Redis lock to elect a Leader to provision the room. (Avoids race conditions)
 end note
 
-MSA -> RS: SETNX lock:match:{match_id} sessionId_A
-MSB -> RS: SETNX lock:match:{match_id} sessionId_B
+UA -> NX: POST /api/session/init {peer_id: uid_B, topic, difficulty}
+NX -> GW: Forward
+UB -> NX: POST /api/session/init {peer_id: uid_A, topic, difficulty}
+NX -> GW: Forward
 
-RS --> MSA: 1 (Leader)
-RS --> MSB: 0 (Follower)
+GW -> GW: Generate lock_key = lock:match:{user_min}:{user_max}
+GW -> GW: Generate room_id = UUID
 
-group Leader Logic (MSA)
-    MSA -> QS: GET /question/?topic=X&difficulty=Y
-    QS --> MSA: {question_id: "q_101", ...}
-    MSA -> RS: SET session:{sessionId_A}:meta\n{user1_id, user2_id, questionId,\ntopic, difficulty, startedAt} EX 7200
-    MSA -> RS: SET active_session:{uid_A} sessionId_A EX 7200
-    MSA -> RS: SET active_session:{uid_B} sessionId_A EX 7200
-    MSA -->> GWA: SSE chunk: event: match_found\n{sessionId, questionId}
-    GWA -->> UA: SSE event: match_found\n{sessionId, questionId}
+GW -> RS: SETNX lock_key room_id
+RS --> GW: 1 (Leader) or 0 (Follower)
+
+group Leader Logic (e.g., UA's request)
+    GW -> QS: GET /question?topic=X&difficulty=Y
+    QS --> GW: {question_id: "q_101", ...}
+    GW -> RS: SET session:{room_id}:meta {users, questionId, topic, diff, startedAt}
+    GW -> RS: SET active_session:{uid_A} room_id
+    GW -> RS: SET active_session:{uid_B} room_id
+    GW --> UA: 200 OK {room_id}
 end
 
-group Follower Logic (MSB)
-    MSB -> RS: GET lock:match:{match_id}
-    RS --> MSB: sessionId_A (winning ID)
-    MSB -> RS: POLL session:{sessionId_A}:meta\n(up to 50x, 200ms intervals)
-    RS --> MSB: {meta}
-    MSB -->> GWB: SSE chunk: event: match_found\n{sessionId: sessionId_A, questionId}
-    GWB -->> UB: SSE event: match_found\n{sessionId: sessionId_A, questionId}
+group Follower Logic (e.g., UB's request)
+    GW -> RS: GET lock_key
+    RS --> GW: room_id
+    GW -> RS: POLL session:{room_id}:meta (until exists)
+    RS --> GW: {meta}
+    GW --> UB: 200 OK {room_id}
 end
 
 == Phase 3: Ticket Acquisition & WebSocket Connection ==
 
-UA -> NX: POST /api/collab/join (JWT_A, sessionId_A)
-NX -> GWA: Forward (strip /api)
-GWA -> GWA: Verify JWT_A, inject X-User-Id: uid_A
-GWA -> Collab: POST /collab/join (X-User-Id: uid_A, sessionId_A)
-Collab -> RS: GET session:{sessionId_A}:meta
-Collab -> Collab: Check uid_A in [user1_id, user2_id]
-Collab -> RS: SET ticket:{UUID_1} {uid_A, sessionId_A} EX 60
-Collab --> GWA: { ticket: "UUID_1" }
-GWA --> UA: { ticket: "UUID_1" }
+note over UA, GW
+  Users transition to the Collaboration Page.
+  See **docs/plantUML/collab.puml** for detailed Ticket and WS flow.
+end note
+
+UA -> NX: POST /api/collab/join {room_id}
+NX -> GW: Forward
+GW -> Collab: POST /collab/join (X-User-Id: uid_A, room_id)
+Collab --> GW: {ticket: "UUID_1"}
+GW --> UA: {ticket: "UUID_1"}
 
 UA -> NX: WS /socket.io/?ticket=UUID_1
-NX -> Collab: Proxy Upgrade (plain passthrough)
-Collab -> RS: GETDEL ticket:{UUID_1}
-RS --> Collab: {uid_A, sessionId_A}
-Collab -> Collab: Attach userId & sessionId to socket
-Collab --> UA: HTTP 101 (WebSocket established)
-
-note over NX, Collab
-  Ticket validation happens in collab service
-  Socket.IO middleware, not via nginx auth_request.
-  One ticket per connection (editor + chat = 2 tickets).
-end note
+NX -> Collab: Proxy Upgrade
 
 == Phase 4: Real-time Collaboration ==
 
-group /editor namespace
+group /editor namespace (Yjs Sync)
     UA -> Collab: yjs-update (binary delta)
-    Collab -> Collab: Y.applyUpdate(ydoc, update)
-    Collab -> RS: RPUSH session:{id}:ydoc (base64)
-    Collab -> RS: SET session:{id}:finalCode (plaintext)
     Collab -> UB: Broadcast yjs-update
 end
 
 group /chat namespace
     UA -> Collab: send-message ({text})
-    Collab -> Collab: Sanitize text (strip < >)
-    Collab -> RS: RPUSH session:{id}:chat (JSON)
-    Collab -> RS: LTRIM session:{id}:chat -500 -1
-    Collab -> UB: Broadcast receive-message\n{sender, text, time}
-end
-
-group Connection events (/editor)
-    Collab -> UB: user-joined {userId: A}\n(on A's connection)
-    Collab -> UA: user-joined {userId: B}\n(notify about existing users)
-    Collab -> UB: user-left {userId: A}\n(on A's disconnect)
+    Collab -> UB: Broadcast receive-message
 end
 
 note over Collab
-  /editor and /chat are separate Socket.IO namespaces.
-  Each requires its own ticket for connection.
-  Yjs updates use CRDT for conflict-free merging.
-  Plaintext finalCode snapshot is maintained alongside
-  the Yjs update log for quick history access.
+  Collaboration uses Yjs for editor sync and Socket.io for chat.
+  State is persisted in Redis Sessions DB.
 end note
 @enduml

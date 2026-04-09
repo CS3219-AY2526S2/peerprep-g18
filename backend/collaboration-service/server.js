@@ -3,8 +3,14 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { createClient } = require('redis');
+const { createAdapter } = require('@socket.io/redis-adapter');
 const Y = require('yjs');
 const axios = require('axios');
+
+// --- CONSTANTS ---
+const MAX_GEMINI_USAGE = 3;
+const MATCHING_SESSION_DURATION = 7200; // 2 hours in seconds
+const REDUCE_USAGE_ON_FAIL = true;      // Allow retry if AI service fails
 
 const app = express();
 app.use(cors());
@@ -23,18 +29,17 @@ const redisClient = createClient({
   socket: { host: process.env.REDIS_SESSIONS_HOST || 'redis-sessions', port: 6379 }
 });
 redisClient.on('error', (err) => console.error('Redis error:', err));
-redisClient.connect().then(() => console.log('Connected to redis-sessions'));
+
+// Redis clients dedicated to Socket.IO adapter (pub/sub)
+const pubClient = createClient({
+  socket: { host: process.env.REDIS_PUBSUB_HOST || 'redis-pubsub', port: 6379 }
+});
+const subClient = pubClient.duplicate();
+pubClient.on('error', (err) => console.error('Redis pubsub pub error:', err));
+subClient.on('error', (err) => console.error('Redis pubsub sub error:', err));
 
 // In-memory session state
 const sessions = new Map();
-// sessions.get(sessionId) = {
-//   ydoc: Y.Doc,
-//   connectedEditors: Set<string>,   // userIds currently connected via socket
-//   endedUsers: Set<string>,          // userIds who explicitly ended session
-//   userDisconnectTimers: Map<string, Timeout>,
-//   activeSocketIds: Map<string, string>,
-//   disconnectTimer: Timeout | null
-// }
 
 // Ticket validation middleware
 async function ticketMiddleware(socket, next) {
@@ -94,13 +99,24 @@ editorNs.on('connection', async (socket) => {
   const { userId, sessionId } = socket;
   if (!userId || !sessionId) return socket.disconnect(true);
 
+  const [ended, userEnded] = await Promise.all([
+    redisClient.get(`session:${sessionId}:ended`),
+    redisClient.get(`session:${sessionId}:user_ended:${userId}`)
+  ]);
+  if (ended || userEnded) {
+    console.log(`[connect] Rejecting ${userId} — ${userEnded ? 'user already left' : 'session already ended'} (session=${sessionId})`);
+    socket.emit('session-ended', { message: 'This session has already ended.' });
+    return socket.disconnect(true);
+  }
+
   const session = await getOrCreateSession(sessionId);
 
   // Check before setting — if an entry exists, this user was here before
   const isReconnect = session.activeSocketIds.has(userId);
 
-  // Register this as the latest socket for the user
+  // Register this as the latest socket for the user (in-memory for same-instance, Redis for cross-instance)
   session.activeSocketIds.set(userId, socket.id);
+  await redisClient.set(`session:${sessionId}:activesocket:${userId}`, socket.id);
 
   // Clear any disconnect timers for this user (they reconnected in time)
   if (session.userDisconnectTimers.has(userId)) {
@@ -115,6 +131,7 @@ editorNs.on('connection', async (socket) => {
   }
 
   session.connectedEditors.add(userId);
+  await redisClient.sAdd(`session:${sessionId}:connectedEditors`, userId);
   console.log(`[connect] ${userId} ${isReconnect ? 'reconnected' : 'connected'} (socket=${socket.id}, session=${sessionId}, editors=${[...session.connectedEditors]})`);
   socket.join(sessionId);
 
@@ -169,6 +186,9 @@ editorNs.on('connection', async (socket) => {
       console.error(`[end-session] Failed to save history for ${userId}: ${err.message}`);
     }
 
+    // Permanently block this user from rejoining via /collab/join
+    await redisClient.set(`session:${sessionId}:user_ended:${userId}`, '1', { EX: 7200 });
+
     // Notify remaining users — they get a prompt to continue or leave
     socket.to(sessionId).emit('partner-ended', { userId });
 
@@ -176,16 +196,18 @@ editorNs.on('connection', async (socket) => {
     if (typeof ack === 'function') ack();
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     session.connectedEditors.delete(userId);
+    await redisClient.sRem(`session:${sessionId}:connectedEditors`, userId);
 
     // If the user already explicitly ended, skip the disconnect timer entirely —
     // history is already saved and partner was already notified.
     if (session.endedUsers.has(userId)) {
       console.log(`[disconnect] ${userId} socket closed after explicit end-session, skipping timer (socket=${socket.id}, session=${sessionId})`);
 
-      // Still need to check if session needs cleanup (both users gone)
-      if (session.connectedEditors.size === 0) {
+      // Use Redis sCard — connectedEditors across ALL instances, not just this one
+      const remainingCount = await redisClient.sCard(`session:${sessionId}:connectedEditors`);
+      if (remainingCount === 0) {
         if (session.disconnectTimer) {
           clearTimeout(session.disconnectTimer);
         }
@@ -204,6 +226,38 @@ editorNs.on('connection', async (socket) => {
       return;
     }
 
+    // Both users are now gone — end the session immediately for everyone
+    if (session.connectedEditors.size === 0) {
+      for (const [, timer] of session.userDisconnectTimers) {
+        clearTimeout(timer);
+      }
+      session.userDisconnectTimers.clear();
+
+      const finalCode = session.ydoc.getText('code').toString();
+      const usersToEnd = [...session.activeSocketIds.keys()].filter(
+        uid => !session.endedUsers.has(uid)
+      );
+      console.log(`[disconnect] Both users gone, ending session immediately for [${usersToEnd}] (session=${sessionId})`);
+      // Mark session as ended immediately so /collab/join rejects new entries
+      redisClient.set(`session:${sessionId}:ended`, '1', { EX: 300 })
+        .catch(err => console.error(`[disconnect] Failed to set ended flag: ${err.message}`));
+      Promise.all(usersToEnd.map(uid => handleUserEnded(sessionId, uid, finalCode)))
+        .catch(err => console.error(`[disconnect] Failed to save history: ${err.message}`));
+
+      if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
+      session.disconnectTimer = setTimeout(async () => {
+        console.log(`[cleanup] Session cleanup timer fired, cleaning up (session=${sessionId})`);
+        try {
+          await handleSessionEnded(sessionId);
+        } catch (err) {
+          console.error(`[cleanup] Failed to clean up session ${sessionId}: ${err.message}`);
+        }
+        sessions.delete(sessionId);
+        console.log(`[cleanup] Session ${sessionId} removed from memory`);
+      }, 5000);
+      return;
+    }
+
     console.log(`[disconnect] ${userId} socket closed (socket=${socket.id}, session=${sessionId}, editorsLeft=${[...session.connectedEditors]})`);
 
     // Notify partner about unexpected disconnect
@@ -215,14 +269,18 @@ editorNs.on('connection', async (socket) => {
     // Capture which socket triggered this disconnect
     const disconnectingSocketId = socket.id;
 
+    // Snapshot code at disconnect time — not after 30s when partner may have kept editing
+    const finalCode = session.ydoc.getText('code').toString();
+
     // Start 30s timer for this user — if they don't reconnect, treat as end-session
     console.log(`[setTimer] Started 30s disconnect timer for ${userId} (disconnectSocket=${disconnectingSocketId}, session=${sessionId})`);
 
     const userTimer = setTimeout(async () => {
       session.userDisconnectTimers.delete(userId);
-      const currentSocketId = session.activeSocketIds.get(userId);
+      // Read from Redis so cross-instance reconnects are visible (Instance 2 overwrites this key on reconnect)
+      const currentSocketId = await redisClient.get(`session:${sessionId}:activesocket:${userId}`);
 
-      // If the user reconnected, their active socket ID will differ from the one that disconnected
+      // If the user reconnected (on any instance), their active socket ID will differ from the one that disconnected
       if (currentSocketId !== disconnectingSocketId) {
         console.log(`[timerFired] ${userId} reconnected via new socket (old=${disconnectingSocketId}, new=${currentSocketId}), skipping (session=${sessionId})`);
         return;
@@ -232,8 +290,6 @@ editorNs.on('connection', async (socket) => {
       // before the server processes the end-session socket event)
       const activeSessionVal = await redisClient.get(`active_session:${userId}`);
       const restEndedEarly = activeSessionVal === null || activeSessionVal !== sessionId;
-
-      const finalCode = session.ydoc.getText('code').toString();
       try {
         await handleUserEnded(sessionId, userId, finalCode);
       } catch (err) {
@@ -247,23 +303,30 @@ editorNs.on('connection', async (socket) => {
         editorNs.to(sessionId).emit('partner-ended', { userId });
       }
 
+      // Permanently block this user from rejoining via /collab/join
+      await redisClient.set(`session:${sessionId}:user_ended:${userId}`, '1', { EX: 7200 });
+
       // Check if session needs cleanup
       if (session.connectedEditors.size === 0) {
-        if (session.disconnectTimer) {
-          clearTimeout(session.disconnectTimer);
-          console.log(`[cancelTimer] Cleared previous session cleanup timer before setting new one (session=${sessionId})`);
-        }
-        console.log(`[setTimer] Started 5s session cleanup timer (session=${sessionId})`);
-        session.disconnectTimer = setTimeout(async () => {
-          console.log(`[cleanup] Session cleanup timer fired, cleaning up (session=${sessionId})`);
-          try {
-            await handleSessionEnded(sessionId);
-          } catch (err) {
-            console.error(`[cleanup] Failed to clean up session ${sessionId}: ${err.message}`);
+      // Use Redis sCard — connectedEditors across ALL instances, not just this one
+      const remainingCount = await redisClient.sCard(`session:${sessionId}:connectedEditors`);
+        if (remainingCount === 0) {
+          if (session.disconnectTimer) {
+            clearTimeout(session.disconnectTimer);
+            console.log(`[cancelTimer] Cleared previous session cleanup timer before setting new one (session=${sessionId})`);
           }
-          sessions.delete(sessionId);
-          console.log(`[cleanup] Session ${sessionId} removed from memory`);
-        }, 5000);
+          console.log(`[setTimer] Started 5s session cleanup timer (session=${sessionId})`);
+          session.disconnectTimer = setTimeout(async () => {
+            console.log(`[cleanup] Session cleanup timer fired, cleaning up (session=${sessionId})`);
+            try {
+              await handleSessionEnded(sessionId);
+            } catch (err) {
+              console.error(`[cleanup] Failed to clean up session ${sessionId}: ${err.message}`);
+            }
+            sessions.delete(sessionId);
+            console.log(`[cleanup] Session ${sessionId} removed from memory`);
+          }, 5000);
+        }
       }
     }, 30000);
 
@@ -293,7 +356,7 @@ chatNs.on('connection', async (socket) => {
     const message = {
       sender: userId,
       text: sanitizedText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: new Date().toISOString()
     };
 
     await redisClient.rPush(
@@ -303,8 +366,105 @@ chatNs.on('connection', async (socket) => {
     await redisClient.lTrim(`session:${sessionId}:chat`, -500, -1);
 
     chatNs.to(sessionId).emit('receive-message', message);
+
+    // --- GEMINI INTEGRATION (Non-blocking Background Task) ---
+    if (sanitizedText.trim().toLowerCase().startsWith('@gemini')) {
+      const geminiPrompt = sanitizedText.trim().substring(7).trim();
+      if (!geminiPrompt) return;
+
+      // 1. Check Usage Limit (Immediate feedback)
+      const usageKey = `session:${sessionId}:gemini_usage`;
+      redisClient.incr(usageKey).then(async (currentUsage) => {
+        if (currentUsage === 1) await redisClient.expire(usageKey, MATCHING_SESSION_DURATION);
+
+        if (currentUsage > MAX_GEMINI_USAGE) {
+          const limitMsg = {
+            sender: 'Gemini',
+            text: `Sorry, this session has reached the limit of ${MAX_GEMINI_USAGE} Gemini requests.`,
+            time: new Date().toISOString()
+          };
+          chatNs.to(sessionId).emit('receive-message', limitMsg);
+          return;
+        }
+
+        // 2. Trigger Background Processing
+        processGeminiCommand(sessionId, geminiPrompt, usageKey);
+      }).catch(err => console.error('[Gemini] Usage check error:', err));
+    }
   });
 });
+
+/**
+ * Background task to gather context and call the AI service.
+ */
+async function processGeminiCommand(sessionId, prompt, usageKey) {
+  try {
+    // 1. Gather Context
+    const session = sessions.get(sessionId);
+    const currentCode = session ? session.ydoc.getText('code').toString() : '';
+    
+    let questionStatement = 'Not found';
+    const metaRaw = await redisClient.get(`session:${sessionId}:meta`);
+    if (metaRaw) {
+      const meta = JSON.parse(metaRaw);
+      try {
+        const qRes = await axios.get(`http://question-service:6768/question/${meta.questionId}`);
+        questionStatement = qRes.data.statement;
+      } catch (qErr) {
+        console.error('[Gemini] Failed to fetch question statement:', qErr.message);
+      }
+    }
+
+    const contextString = `
+[SYSTEM INSTRUCTION]
+Act as a helpful and concise (imagine you are responding a direct message) technical interview peer. 
+Help the user with their question while considering the code they've written and the problem statement. 
+Keep the response professional and encouraging. Avoid giving the direct solution, but feel free to provide hints, suggestions, or ask guiding questions.
+Try to keep your response within 3-4 sentences to avoid overwhelming the user if possible.
+If the user prompts you with questions outside of the context, feel free to reply that it is outside of your domain.
+
+[PROBLEM STATEMENT]
+${questionStatement}
+
+[CURRENT COLLABORATIVE CODE]
+\`\`\`python
+${currentCode}
+\`\`\`
+
+[USER PROMPT]
+`.trim();
+
+    // 2. Call AI Service
+    try {
+      const aiRes = await axios.post('http://ai-service:6771/generate', {
+        prompt: prompt,
+        context: contextString
+      }, { timeout: 15000 });
+
+      const aiMessage = {
+        sender: 'Gemini',
+        text: aiRes.data.response,
+        time: new Date().toISOString()
+      };
+
+      await redisClient.rPush(`session:${sessionId}:chat`, JSON.stringify(aiMessage));
+      chatNs.to(sessionId).emit('receive-message', aiMessage);
+    } catch (aiErr) {
+      console.error('[Gemini] AI Service call failed:', aiErr.message);
+      chatNs.to(sessionId).emit('receive-message', {
+        sender: 'Gemini',
+        text: 'Gemini is currently having trouble responding. Please try again later.',
+        time: new Date().toISOString()
+      });
+      
+      if (REDUCE_USAGE_ON_FAIL) {
+        await redisClient.decr(usageKey);
+      }
+    }
+  } catch (err) {
+    console.error('[Gemini] Background task error:', err);
+  }
+}
 
 // ==========================================
 // SESSION LIFECYCLE HELPERS (previously in api-gateway)
@@ -344,7 +504,7 @@ async function handleUserEnded(sessionId, userId, finalCode) {
   } else {
     console.log(`[history] active_session for ${userId} already cleared (session=${sessionId})`);
   }
-  await redisClient.set(`session:${sessionId}:saved:${userId}`, '1', { EX: 7200 });
+  await redisClient.set(`session:${sessionId}:saved:${userId}`, '1', { EX: MATCHING_SESSION_DURATION });
 }
 
 async function handleSessionEnded(sessionId) {
@@ -382,8 +542,11 @@ async function handleSessionEnded(sessionId) {
     `session:${sessionId}:finalCode`,
     `session:${sessionId}:ydoc`,
     `session:${sessionId}:chat`,
+    `session:${sessionId}:connectedEditors`,
     `session:${sessionId}:saved:${meta.user1_id}`,
-    `session:${sessionId}:saved:${meta.user2_id}`
+    `session:${sessionId}:saved:${meta.user2_id}`,
+    `session:${sessionId}:activesocket:${meta.user1_id}`,
+    `session:${sessionId}:activesocket:${meta.user2_id}`
   );
   console.log(`[session-cleanup] Redis session keys deleted (session=${sessionId})`);
 
@@ -409,8 +572,13 @@ app.get('/collab/session/:sessionId', async (req, res) => {
   const uid = req.headers['x-user-id'];
   if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
 
-  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  const [raw, ended, userEnded] = await Promise.all([
+    redisClient.get(`session:${sessionId}:meta`),
+    redisClient.get(`session:${sessionId}:ended`),
+    redisClient.get(`session:${sessionId}:user_ended:${uid}`)
+  ]);
   if (!raw) return res.status(404).json({ detail: 'Session not found' });
+  if (ended || userEnded) return res.status(410).json({ detail: 'Session has already ended' });
 
   const meta = JSON.parse(raw);
   if (![meta.user1_id, meta.user2_id].includes(uid)) {
@@ -441,8 +609,14 @@ app.post('/collab/join', async (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) return res.status(400).json({ detail: 'sessionId required' });
 
-  const raw = await redisClient.get(`session:${sessionId}:meta`);
+  const [raw, ended, userEnded] = await Promise.all([
+    redisClient.get(`session:${sessionId}:meta`),
+    redisClient.get(`session:${sessionId}:ended`),
+    redisClient.get(`session:${sessionId}:user_ended:${uid}`)
+  ]);
   if (!raw) return res.status(404).json({ detail: 'Session not found' });
+  if (ended) return res.status(410).json({ detail: 'Session has already ended' });
+  if (userEnded) return res.status(410).json({ detail: 'You have already left this session' });
 
   const meta = JSON.parse(raw);
   if (![meta.user1_id, meta.user2_id].includes(uid)) {
@@ -473,7 +647,24 @@ app.post('/collab/end-session/:sessionId', async (req, res) => {
   res.json({ detail: 'Active session cleared' });
 });
 
-const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
-  console.log(`Collaboration Service running on port ${PORT}`);
+Promise.all([
+  redisClient.connect().then(() => console.log('Connected to redis-sessions')),
+  pubClient.connect(),
+  subClient.connect(),
+]).then(() => {
+  io.adapter(createAdapter(pubClient, subClient));
+  console.log('Socket.IO Redis adapter attached');
+
+  const PORT = process.env.PORT || 4000;
+  server.listen(PORT, () => {
+    console.log(`Collaboration Service running on port ${PORT}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, closing connections...');
+    io.close(() => {
+      console.log('All Socket.IO connections closed');
+      process.exit(0);
+    });
+  });
 });
