@@ -143,7 +143,7 @@ export function HistoryPage() {
         try {
             const token = localStorage.getItem('peerprep_token');
             const response = await fetch(
-                `${GATEWAY_URL}/history/detail/${sessionId}/${currentUser?.uid}`,
+                `${GATEWAY_URL}/history/detail/${sessionId}`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
 
@@ -299,12 +299,7 @@ export function HistoryPage() {
 
                                                 {/* 1. Collaboration & Time Metadata */}
                                                 <div className="flex flex-wrap gap-3">
-                                                    <div className="bg-[#2D2942]/50 px-4 py-2 rounded-xl border border-white/5 flex items-center gap-2">
-                                                        <Users className="w-4 h-4 text-[#E8B995]" />
-                                                        <span className="text-xs text-gray-300">
-                                                            Collaborated with: <span className="text-white font-bold">{selectedAttempt.user1_id === currentUser?.username ? selectedAttempt.user2_id : selectedAttempt.user1_id}</span>
-                                                        </span>
-                                                    </div>
+                                                    
                                                     <div className="bg-[#2D2942]/50 px-4 py-2 rounded-xl border border-white/5 flex items-center gap-2">
                                                         <Clock className="w-4 h-4 text-[#E8B995]" />
                                                         <span className="text-xs text-gray-300">
