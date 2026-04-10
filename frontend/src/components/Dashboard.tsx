@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, User, Users as UsersIcon, Check, Loader2, History } from 'lucide-react';
+import { LogOut, User, Check, Loader2, History } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { GATEWAY_URL } from '../constants';
 
@@ -9,7 +9,6 @@ export function Dashboard() {
   const { user, handleLogout } = useUser();
   const [selectedDifficulties, setSelectedDifficulties] = useState<string[]>([]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
-  const [activeUsersCount] = useState(Math.floor(Math.random() * 20) + 5);
 
   const [availableTopics, setAvailableTopics] = useState<string[]>([]);
   const [availableDifficulties, setAvailableDifficulties] = useState<string[]>([]);
@@ -143,8 +142,7 @@ export function Dashboard() {
             </button>
           </div>
         </div>
-
-        {/* Welcome Card with Active Users */}
+        {/* Welcome Card */}
         <div className="card-peach mb-8">
           <div className="flex justify-between items-start gap-4">
             <div className="flex-1">
@@ -154,13 +152,6 @@ export function Dashboard() {
               <p className="text-gray-700">
                 Select one or more preferences below to find a peer and start coding together
               </p>
-            </div>
-            <div className="bg-[#4A4563] rounded-2xl px-5 py-3 flex items-center gap-3">
-              <UsersIcon className="w-6 h-6 text-[#E8B995]" />
-              <div>
-                <p className="text-white font-bold text-xl">{activeUsersCount}</p>
-                <p className="text-gray-300 text-xs">Users Online</p>
-              </div>
             </div>
           </div>
         </div>
