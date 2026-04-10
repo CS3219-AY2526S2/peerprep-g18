@@ -14,42 +14,43 @@ This document records our **current** database schema plan for selected PeerPrep
 
 ---
 
-## M1: User Service (Schema)
+## M1: User Service (Schema) — Firestore
 
-Planned table: `Users`
+Collection: `Users`
 
 | Field | Type | Remarks |
 |---|---|---|
-| `UserID` | UUID | Primary Key (Incremental)* |
-| `Username` | String | Editable (Unique) |
-| `Email` | String | Editable (Unique) |
-| `HashedPassword` | String | Editable (Hashed) |
-| `Salt` | String | Generated |
-| `AvatarID` | Integer | Editable |
-| `Role` | String | Editable (Enum) |
+| (Document ID) | String | Firebase UID (`user_id`) |
+| `username` | String | Editable (Unique, checked case-insensitively) |
+| `email` | String | Editable (Unique, synced with Firebase Auth) |
+| `avatar_id` | Integer | Editable |
+| `role` | String | "User", "Admin", or "Root" |
 
 Notes:
-- `Username` and `Email` are intended to be unique identifiers for login/identity. 
-- `Role` supports role-based access control (RBAC) at the User Service level (exact roles to be finalized). 
+- `username` and `email` are used for identity.
+- Passwords and email verification state are managed by Firebase Auth, not stored in this Firestore collection.
+- `role` is also stored in Firebase Custom Claims for gateway-level RBAC.
 
 ---
 
-## M3: Question Management (Schema)
+## M3: Question Management (Schema) — Firestore
 
-Planned table: `Questions`
+Collection: `Questions`
 
 | Field | Type | Remarks |
 |---|---|---|
-| `QuestionID` | UUID | Primary Key |
-| `TopicTag` | String (e.g., "Array") | Editable (Enum) |
-| `DifficultyTag` | String (e.g., "Easy") | Editable (Enum) |
-| `Description` | String | Editable |
-| `Hint` | String | Editable |
-| `CodeTemplate` | String | Editable |
+| (Document ID) | String | `question_id` (UUID) |
+| `title` | String | Editable |
+| `topic` | String | Editable |
+| `difficulty` | String | Editable |
+| `statement` | String | Markdown description |
+| `template` | String | Initial code template |
+| `examples` | List[String] | Sample inputs/outputs |
+| `constraints` | List[String] | Problem constraints |
+| `hints` | List[String] | Progressive hints |
 
 Notes:
-- The Question Service is expected to support storing and retrieving questions by difficulty/topic, and provide question details during session initiation. 
-- `Description`/`Hint` may later support markdown formatting and/or richer content depending on implementation. 
+- The Question Service supports filtering and random selection by topic and difficulty.
 
 ---
 
@@ -74,23 +75,34 @@ Collection: `session_history` (History Service — Firestore)
 Notes:
 - Stored in Firestore via the History Service (`backend/history-service/`).
 - Each user gets their own history entry with a code snapshot from when **they** left the session.
-- If User A ends first and User B continues editing, User A's `finalCode` reflects the code at the time they left, while User B's `finalCode` includes their subsequent changes.
-- A user's history is saved when they explicitly click “End Session” or when their 30-second disconnect timeout expires.
-- Queried by `user1_id` or `user2_id` to retrieve a user's session history.
 
 ## M4: Session State (Schema) — Redis (Ephemeral)
 
-These keys exist in `redis-sessions` only during an active session and are deleted after session cleanup.
+### redis-sessions
+These keys exist during an active session and are deleted after session cleanup.
 
 | Key Pattern | Type | Remarks |
 |---|---|---|
-| `session:{id}:meta` | String (JSON) | Session metadata (user IDs, questionId, topic, difficulty, startedAt). TTL: 2h |
-| `session:{id}:ydoc` | List (base64 strings) | Yjs document update history for replay on reconnect |
-| `session:{id}:finalCode` | String | Plaintext code snapshot, updated on every edit |
-| `session:{id}:chat` | List (JSON strings) | Chat messages. Trimmed to last 500 |
-| `ticket:{uuid}` | String (JSON) | One-time WebSocket ticket (uid + sessionId). TTL: 60s |
-| `lock:match:{uid_A}:{uid_B}` | String | Leader election lock for session creation. TTL: 2h |
-| `session:{id}:saved:{uid}` | String ("1") | Flag: user's history has been saved (prevents duplicate save on cleanup). TTL: 2h |
+| `session:{id}:meta` | String (JSON) | Session metadata. TTL: 2h |
+| `active_session:{uid}` | String | Current `sessionId` for a user. TTL: 2h |
+| `ticket:{uuid}` | String (JSON) | One-time WebSocket ticket (`{uid, sessionId}`). TTL: 60s |
+| `lock:session_init:{uid_A}:{uid_B}` | String | SETNX leader election lock for session creation. |
+
+### redis-auth
+Used for cross-service authorization state.
+
+| Key Pattern | Type | Remarks |
+|---|---|---|
+| `invalidated_user:{uid}` | String ("1") | Blacklisted user (deleted). Gateway returns 401. TTL: 1h |
+| `stale_claims:{uid}` | String (Timestamp) | User was promoted. Gateway returns 403 if token is older. TTL: 1h |
+
+### redis-matching
+Managed by the Matching Service.
+
+| Key Pattern | Type | Remarks |
+|---|---|---|
+| `queue:{topic}:{difficulty}` | List | UIDs waiting for a match. |
+| `match_ticket:{uid}` | String | Temporary ticket used during match handoff. |
 
 ---
 

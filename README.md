@@ -72,7 +72,12 @@ peerprep-g18/
       Dockerfile
       firebase-questionservice.json   (.gitignore but needed to run locally)
     matching-service/
-      ...
+      app/
+        main.py
+        worker.py
+        ...
+      requirements.txt
+      Dockerfile
     collaboration-service/
       server.js                       (Yjs editor + chat over Socket.IO)
       package.json
@@ -82,6 +87,11 @@ peerprep-g18/
       requirements.txt
       Dockerfile
       firebase-history-account.json   (.gitignore but needed to run locally)
+    ai-service/
+      main.py                         (FastAPI — Gemini API wrapper)
+      requirements.txt
+      Dockerfile
+      .env                            (.gitignore but needed to run locally)
 ```
 
 ---
@@ -99,11 +109,12 @@ peerprep-g18/
    ```
    - Firebase Service Account: You must have a `firebase-service-account.json` file in both `backend/api-gateway/` and `backend/user-service/`.
    - Firebase Question Service: You must have `firebase-questionservice.json` in `backend/question-service`.
-   - Firebase History Service: You must have `firebase-history-account.json` in `backend/history-service/`.
-   - Environment Variables: Ensure `backend/user-service/.env` contains your `SMTP_EMAIL` and `SMTP_PASSWORD` for verification emails.
+   - Firebase History Service: You must have `firebase-historyservice.json` in `backend/history-service/`.
+   - Environment Variables for User Service: Ensure `backend/user-service/.env` contains your `SMTP_EMAIL` and `SMTP_PASSWORD` for verification emails.
+   - Environment Variables for AI Service: Ensure `backend/ai-service/.env` contains `GEMINI_API_KEY` by Google's AI Studio.
 
 ### 2. Running the Backend Services
-  The backend is orchestrated using Docker Compose, which manages the API Gateway, User Service, Collaboration Service, and an Nginx reverse proxy.
+  The backend is orchestrated using Docker Compose, which manages the microservices, Redis instances, and an Nginx reverse proxy.
 
    1. Open a terminal in the project root.
    2. Navigate to the `backend/` directory:
@@ -115,15 +126,17 @@ peerprep-g18/
    docker-compose up --build
    ```
    - Nginx will be accessible at http://localhost:80.
-   - API Gateway (Internal) handles routing on port `1234` to each micro-services.
+   - API Gateway (Internal) handles routing on port `1234` to each microservice.
    - User Service manages profile data in Firestore on port `6767`.
    - Question Service manages question data in Firestore on port `6768`.
    - Matching Service manages event-based user matching on port `6769`.
    - Collaboration Service (Internal) manages real-time code editing (Yjs) and chat over Socket.IO on port `4000`.
    - History Service (Internal) saves completed session records to Firestore on port `6770`.
-   - Redis Sessions stores session metadata, tickets, and Yjs state.
-   - Redis Event Bus handles pub/sub between matching service and API gateway.
+   - AI Service (Internal) provides Gemini-powered assistance on port `6771`.
+   - Redis Sessions stores session metadata and active session pointers.
+   - Redis Auth stores auth invalidation signals (deleted users, stale claims).
    - Redis Matching manages the matching queue.
+   - Redis PubSub handles the Socket.IO multi-instance adapter.
 
 ### 3. Running the Frontend
   The frontend is a React application built with Vite.

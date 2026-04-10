@@ -499,3 +499,24 @@ Save a session record to Firestore. Each user gets their own entry with their co
 Retrieve all session records for a given user.
 - **Responses:**
   - `200 OK`: Returns an array of session records where the user was either `user1_id` or `user2_id`.
+
+---
+
+## 7. AI Service
+**Base URL:** `http://ai-service:6771`
+**Purpose:** Provides AI-powered assistance using Google's Gemini models.
+
+### Endpoints
+
+#### `POST /generate`
+Generate a response from the AI model.
+- **Request Body:**
+  ```json
+  {
+    "prompt": "Explain the Two Sum problem.",
+    "context": "The user is working on an Array problem."
+  }
+  ```
+- **Responses:**
+  - `200 OK`: `{"response": "..."}`
+  - `500 Internal Server Error`: Gemini API error or missing configuration.
