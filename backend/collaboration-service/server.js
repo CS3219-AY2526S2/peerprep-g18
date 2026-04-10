@@ -485,6 +485,28 @@ ${currentCode}
 // SESSION LIFECYCLE HELPERS (previously in api-gateway)
 // ==========================================
 
+/**
+ * Utility: fetch question template and compare with finalCode.
+ * Returns true if the code is DIFFERENT from the template (should save),
+ * or if there's an error fetching the template (default to save).
+ */
+async function hasMeaningfulCode(questionId, finalCode) {
+  try {
+    const qRes = await axios.get(`http://question-service:6768/question/${questionId}`);
+    const template = qRes.data.template || '';
+    
+    // Normalize both for a fairer comparison (trim)
+    const normalizedFinal = finalCode.trim();
+    const normalizedTemplate = template.trim();
+    
+    return normalizedFinal !== normalizedTemplate;
+  } catch (err) {
+    console.error(`[history] Failed to fetch template for ${questionId}: ${err.message}`);
+    // If the service is down or question is missing, we save history as a precaution.
+    return true;
+  }
+}
+
 async function handleUserEnded(sessionId, userId, finalCode) {
   // Idempotent: skip if history was already saved for this user+session
   const alreadySaved = await redisClient.get(`session:${sessionId}:saved:${userId}`);
@@ -499,6 +521,20 @@ async function handleUserEnded(sessionId, userId, finalCode) {
     return;
   }
   const meta = JSON.parse(raw);
+
+  // NEW: Check if code is unchanged from template
+  const meaningful = await hasMeaningfulCode(meta.questionId, finalCode);
+  if (!meaningful) {
+    console.log(`[history] Skipping save for ${userId} (session=${sessionId}, code matches template)`);
+    // Still clear active session and mark as saved to avoid cleanup loops
+    await redisClient.set(`session:${sessionId}:saved:${userId}`, '1', { EX: MATCHING_SESSION_DURATION });
+    const currentActiveSession = await redisClient.get(`active_session:${userId}`);
+    if (currentActiveSession === sessionId) {
+      await redisClient.del(`active_session:${userId}`);
+    }
+    return;
+  }
+
   const payload = {
     ...meta,
     sessionId,
@@ -532,10 +568,17 @@ async function handleSessionEnded(sessionId) {
   const meta = JSON.parse(raw);
   const finalCode = (await redisClient.get(`session:${sessionId}:finalCode`)) || '';
 
+  // NEW: Check if code is unchanged from template
+  const meaningful = await hasMeaningfulCode(meta.questionId, finalCode);
+
   for (const key of ['user1_id', 'user2_id']) {
     const uid = meta[key];
     const saved = await redisClient.get(`session:${sessionId}:saved:${uid}`);
     if (!saved) {
+      if (!meaningful) {
+        console.log(`[session-cleanup] Skipping catch-up save for ${uid} (session=${sessionId}, code matches template)`);
+        continue;
+      }
       console.log(`[session-cleanup] Catch-up save for ${uid} who never explicitly ended (session=${sessionId})`);
       const payload = {
         ...meta,
