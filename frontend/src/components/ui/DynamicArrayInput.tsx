@@ -67,8 +67,8 @@ export function DynamicArrayInput({
         ) : (
           /* Map through items if editing OR if content exists */
           items.map((item, idx) => (
-            <div key={idx} className="flex gap-3 items-start animate-in fade-in slide-in-from-left-2">
-              <div className="relative flex-1">
+            <div key={idx} className="flex gap-3 items-start animate-in fade-in slide-in-from-left-2 min-w-0">
+              <div className="relative flex-1 min-w-0">
                 <span className="absolute left-4 top-3 text-[#E8B995] font-mono text-xs z-10">
                   {idx + 1}.
                 </span>
@@ -88,7 +88,7 @@ export function DynamicArrayInput({
                     }`}
                     onClick={() => isSpoiler && !revealed[idx] && toggleReveal(idx)}
                   >
-                    <div className="prose prose-invert max-w-none text-sm text-white">
+                    <div className="prose prose-invert max-w-none text-sm text-white break-all">
                       <ReactMarkdown 
                         remarkPlugins={[remarkMath]} 
                         rehypePlugins={[rehypeKatex]}
@@ -97,7 +97,8 @@ export function DynamicArrayInput({
                           ul: ({node, ...props}) => <ul className="list-disc pl-4 mb-2" {...props} />,
                           li: ({node, ...props}) => <li className="mb-1" {...props} />,
                           p: ({node, ...props}) => <p className="leading-relaxed break-words whitespace-pre-wrap" {...props} />,
-                          code: ({node, ...props}) => <code className="bg-[#3A3552] px-1 rounded text-[#E8B995]" {...props} />
+                          code: ({node, ...props}) => <code className="bg-[#3A3552] px-1 rounded text-[#E8B995] break-all" {...props} />,
+                          pre: ({node, ...props}) => <pre className="bg-[#3A3552]/50 p-4 rounded-xl overflow-x-auto custom-scrollbar" {...props} />
                         }}
                       >
                         {item || "*No content provided.*"}

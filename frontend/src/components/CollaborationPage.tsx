@@ -511,10 +511,10 @@ export function CollaborationPage() {
 
         <div className="grid lg:grid-cols-3 gap-4 lg:gap-6">
           {/* Left: Question + Editor */}
-          <div className="lg:col-span-2 space-y-4 lg:space-y-6">
+          <div className="lg:col-span-2 space-y-4 lg:space-y-6 min-w-0">
             {/* Question Panel */}
             {question && (
-              <div className="card-peach space-y-6">
+              <div className="card-peach space-y-6 overflow-hidden">
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-[#4A4563] font-bold text-xl">{question.title}</h3>

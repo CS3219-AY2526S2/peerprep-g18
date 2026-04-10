@@ -230,9 +230,9 @@ export function ProfilePage() {
                 <Edit2 className="w-6 h-6 text-white" />
               </div>
             </button>
-            <div>
-              <h3 className="text-white font-bold text-xl">@{profileData.username}</h3>
-              <p className="text-gray-400">{profileData.email}</p>
+            <div className="min-w-0">
+              <h3 className="text-white font-bold text-xl truncate">@{profileData.username}</h3>
+              <p className="text-gray-400 break-all">{profileData.email}</p>
             </div>
           </div>
 
@@ -246,7 +246,7 @@ export function ProfilePage() {
                 disabled={isLoading}
               />
               {errors.username && <p className="text-[#E8B995] text-sm">{errors.username}</p>}
-              <div className="flex gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <button onClick={handleSaveProfile} disabled={isLoading} className="btn-secondary flex-1 flex justify-center items-center gap-2">
                   {isLoading && <Loader2 className="animate-spin w-4 h-4" />} Save
                 </button>
@@ -255,8 +255,14 @@ export function ProfilePage() {
             </div>
           ) : (
             <div className="bg-[#2D2942] rounded-2xl p-6 space-y-4">
-               <div className="flex justify-between"><span className="text-gray-400">Username</span><span className="text-white font-mono">@{profileData.username}</span></div>
-               <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="text-white">{profileData.email}</span></div>
+               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 sm:gap-4">
+                 <span className="text-gray-400 text-sm sm:text-base">Username</span>
+                 <span className="text-white font-mono break-all sm:text-right">@{profileData.username}</span>
+               </div>
+               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 sm:gap-4">
+                 <span className="text-gray-400 text-sm sm:text-base">Email</span>
+                 <span className="text-white break-all sm:text-right">{profileData.email}</span>
+               </div>
             </div>
           )}
         </div>

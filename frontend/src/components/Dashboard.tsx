@@ -98,26 +98,26 @@ export function Dashboard() {
     <div className="min-h-screen p-6">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+          <div className="flex items-center gap-4 order-2 sm:order-1">
             <img
               src={user.avatar}
               alt={user.username}
-              className="avatar-circle"
+              className="avatar-circle flex-shrink-0"
             />
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-[#4A4563] font-bold text-xl">@{user.username}</h2>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-[#4A4563] font-bold text-xl truncate">@{user.username}</h2>
                 {isAdmin && (
                   <span className="bg-[#E8B995] text-[#4A4563] text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
                     Admin
                   </span>
                 )}
               </div>
-              <p className="text-gray-600 text-sm">{user.email}</p>
+              <p className="text-gray-600 text-sm break-all">{user.email}</p>
             </div>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 order-1 sm:order-2 self-end sm:self-auto">
             {/* Button for attempt history */}
             <button
               onClick={() => navigate('/history')}

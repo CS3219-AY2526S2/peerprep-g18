@@ -479,17 +479,17 @@ export function AdminPage() {
                     <p className="text-gray-400 text-center py-8">No users found.</p>
                   ) : (
                     users.map((u) => (
-                      <div key={u.user_id} className="bg-[#3A3552] rounded-2xl p-4 flex items-center justify-between flex-wrap gap-4">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-full bg-[#E8B995] flex items-center justify-center text-[#4A4563] font-bold">
+                      <div key={u.user_id} className="bg-[#3A3552] rounded-2xl p-4 flex items-center justify-between flex-wrap gap-4 min-w-0">
+                        <div className="flex items-center gap-4 min-w-0">
+                          <div className="w-10 h-10 rounded-full bg-[#E8B995] flex-shrink-0 flex items-center justify-center text-[#4A4563] font-bold">
                             {u.username.charAt(0).toUpperCase()}
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-white font-bold">@{u.username}</span>
-                              {u.role === 'Admin' && <Star className="w-4 h-4 text-[#E8B995] fill-current" />}
+                              <span className="text-white font-bold truncate">@{u.username}</span>
+                              {u.role === 'Admin' && <Star className="w-4 h-4 text-[#E8B995] fill-current flex-shrink-0" />}
                             </div>
-                            <p className="text-sm text-gray-400">{u.email}</p>
+                            <p className="text-sm text-gray-400 truncate break-all">{u.email}</p>
                           </div>
                         </div>
 
@@ -649,11 +649,11 @@ export function AdminPage() {
                           }}
                         >
                           {/* LEFT SIDE INFO (Now inside the clickable div) */}
-                          <div className="flex items-center gap-4">
-                            <span className="text-[#E8B995] font-mono font-bold">#{q.question_id}</span>
-                            <div>
-                              <h4 className="text-white font-bold group-hover:text-[#E8B995] transition-colors">{q.title}</h4>
-                              <div className="flex gap-2 mt-1">
+                          <div className="flex items-center gap-4 min-w-0">
+                            <span className="text-[#E8B995] font-mono font-bold flex-shrink-0">#{q.question_id}</span>
+                            <div className="min-w-0">
+                              <h4 className="text-white font-bold group-hover:text-[#E8B995] transition-colors truncate">{q.title}</h4>
+                              <div className="flex gap-2 mt-1 flex-wrap">
                                 <span className="text-[10px] uppercase font-bold text-gray-400">{q.topic}</span>
                                 <span className={`text-[10px] uppercase font-bold ${q.difficulty === 'Easy' ? 'text-green-400' :
                                     q.difficulty === 'Medium' ? 'text-yellow-400' : 'text-red-400'
@@ -735,24 +735,23 @@ export function AdminPage() {
               </div>
 
               {/* Pagination Controls moved below the list */}
-              <div className="flex items-center justify-center gap-4 mt-12 pb-8">
-                <div className="flex items-center justify-center gap-4 mt-8">
+              <div className="flex flex-wrap items-center justify-center gap-4 mt-12 pb-8">
                 <button
                   disabled={currentPage === 1}
                   onClick={() => setCurrentPage(prev => prev - 1)}
-                  className="px-4 py-2 rounded-xl bg-[#3A3552] text-white disabled:opacity-30 hover:bg-[#453F5C] transition-all"
+                  className="px-4 py-2 rounded-xl bg-[#3A3552] text-white disabled:opacity-30 hover:bg-[#453F5C] transition-all flex-shrink-0"
                 >
                   Previous
                 </button>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-center gap-2">
                   {Array.from({ length: totalPages }).map((_, i) => {
                     const pageNum = i + 1;
                     return (
                       <button
                         key={pageNum}
                         onClick={() => setCurrentPage(pageNum)}
-                        className={`w-10 h-10 rounded-xl font-bold transition-all ${
+                        className={`w-10 h-10 rounded-xl font-bold transition-all flex-shrink-0 ${
                           currentPage === pageNum 
                             ? 'bg-[#E8B995] text-[#4A4563] shadow-lg shadow-[#E8B995]/20' 
                             : 'bg-[#3A3552] text-white hover:bg-[#453F5C]'
@@ -767,11 +766,10 @@ export function AdminPage() {
                 <button
                   disabled={currentPage === totalPages}
                   onClick={() => setCurrentPage(prev => prev + 1)}
-                  className="px-4 py-2 rounded-xl bg-[#3A3552] text-white disabled:opacity-30 hover:bg-[#453F5C] transition-all"
+                  className="px-4 py-2 rounded-xl bg-[#3A3552] text-white disabled:opacity-30 hover:bg-[#453F5C] transition-all flex-shrink-0"
                 >
                   Next
                 </button>
-              </div>
               </div>
             </>
           )}
