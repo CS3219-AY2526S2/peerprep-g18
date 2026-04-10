@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, Loader2, ChevronRight, Calendar, Clock, Tag, Code2, Search, X, Users } from 'lucide-react';
+import { ArrowLeft, BookOpen, Loader2, ChevronRight, Calendar, Clock, Tag, Code2, Search, X, Users } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
 import ReactMarkdown from 'react-markdown';
@@ -168,6 +168,13 @@ export function HistoryPage() {
     return (
         <div className="min-h-screen p-6 bg-[#2D2942]">
             <div className="max-w-4xl mx-auto">
+                <button 
+                    onClick={() => navigate(-1)} 
+                    className="mb-6 flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+                >
+                    <ArrowLeft className="w-5 h-5" />
+                    <span className="font-medium">Back to Dashboard</span>
+                </button>
                 {/* Header */}
                 <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-3">
