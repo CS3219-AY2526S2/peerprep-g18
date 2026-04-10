@@ -20,7 +20,23 @@ def test_health_check():
 def test_get_user_history_empty():
     """Test getting history for a user with no history."""
     client = TestClient(app)
-    mock_db.collection.return_value.where.return_value.order_by.return_value.stream.return_value = []
-    response = client.get("/history/user/test-uid")
+    
+    # Mock empty stream
+    mock_db.collection.return_value.where.return_value.select.return_value.order_by.return_value.limit.return_value.offset.return_value.stream.return_value = []
+    
+    # Mock count result
+    mock_count = MagicMock()
+    mock_count.value = 0
+    mock_db.collection.return_value.where.return_value.count.return_value.get.return_value = [[MagicMock(value=mock_count)]]
+    
+    # Correct endpoint is /history/user and requires X-User-Id header
+    response = client.get("/history/user", headers={"X-User-Id": "test-uid"})
+    
     assert response.status_code == 200
-    assert response.json() == []
+    expected_response = {
+        "attempts": [],
+        "total_pages": 0,
+        "current_page": 1,
+        "total_items": 0
+    }
+    assert response.json() == expected_response

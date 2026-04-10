@@ -83,6 +83,9 @@ jobs:
       - name: Install dependencies
         run: npm install
         working-directory: backend/collaboration-service
+      - name: Run tests
+        run: npm test
+        working-directory: backend/collaboration-service
 
   docker-build:
     runs-on: ubuntu-latest

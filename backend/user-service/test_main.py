@@ -3,6 +3,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 import sys
 
+import firebase_admin
+from firebase_admin import auth, credentials, firestore
+
 # Mocking external dependencies BEFORE importing the app
 # This is necessary because main.py initializes Firebase and Redis at the module level.
 mock_db = MagicMock()

@@ -36,5 +36,5 @@ async def test_gateway_proxy_public_route():
     response = client.post("/users", json={"email": "test@example.com"})
     
     assert response.status_code == 200
-    assert response.json() == {"success": true}
+    assert response.json() == {"success": True}
     mock_http_client.request.assert_called_once()
