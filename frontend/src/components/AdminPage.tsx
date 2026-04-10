@@ -8,7 +8,7 @@
  * PeerPrep's specific architecture, and verified.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, LogOut, ChevronRight } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
@@ -23,9 +23,27 @@ import 'katex/dist/katex.min.css';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 import { dracula } from '@uiw/codemirror-theme-dracula';
-import { useRef } from 'react';
 
 type AdminTab = 'users' | 'questions';
+
+interface User {
+  user_id: string;
+  username: string;
+  email: string;
+  role: 'User' | 'Admin' | 'Root';
+}
+
+interface Question {
+  question_id: string | number;
+  title: string;
+  topic: string;
+  difficulty: string;
+  statement?: string;
+  examples?: string[];
+  constraints?: string[];
+  hints?: string[];
+  template?: string;
+}
 
 export function AdminPage() {
   const navigate = useNavigate();
@@ -36,7 +54,7 @@ export function AdminPage() {
     navigate('/', { replace: true });
   };
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -44,14 +62,13 @@ export function AdminPage() {
 
   // Question State
   const [searchId, setSearchId] = useState('');
-  const [managedQuestion, setManagedQuestion] = useState<any>(null);
+  const [managedQuestion, setManagedQuestion] = useState<Question | null>(null);
   const [filterTopic, setFilterTopic] = useState('All');
   const [filterDifficulty, setFilterDifficulty] = useState('All');
   const [availableTopics, setAvailableTopics] = useState<string[]>([]);
   const [availableDifficulties, setAvailableDifficulties] = useState<string[]>([]);
-  // const [isAddingQuestion, setIsAddingQuestion] = useState(false);
 
-  const [questions, setQuestions] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [activeSearchMode, setActiveSearchMode] = useState<'none' | 'id' | 'criteria'>('none');
@@ -66,13 +83,11 @@ export function AdminPage() {
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     mode: 'add' | 'edit';
-    data?: any;
+    data?: Question;
   }>({ isOpen: false, mode: 'add' });
 
   // Checks a gateway response for auth invalidation signals.
-  // Returns true if an auth event was dispatched and the caller should return early.
-  // Uses response.clone() so the original body remains readable by the caller.
-  const handleAuthError = async (response: Response): Promise<boolean> => {
+  const handleAuthError = useCallback(async (response: Response): Promise<boolean> => {
     if (response.status === 401) {
       const data = await response.clone().json().catch(() => ({}));
       if (data.detail === 'ACCOUNT_DELETED') {
@@ -81,9 +96,9 @@ export function AdminPage() {
       }
     }
     return false;
-  };
+  }, []);
 
-  const fetchQuestions = async (page: number, topic = 'All', difficulty = 'All') => {
+  const fetchQuestions = useCallback(async (page: number, topic = 'All', difficulty = 'All') => {
     setIsLoading(true);
     try {
       const token = localStorage.getItem('peerprep_token');
@@ -101,31 +116,14 @@ export function AdminPage() {
       setQuestions(data.questions);
       setTotalPages(data.total_pages);
       setCurrentPage(data.current_page);
-    } catch (err: any) {
+    } catch {
       setError("Failed to filter questions");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [handleAuthError]);
 
-  // Refetch whenever the page changes
-  useEffect(() => {
-    if (activeTab === 'questions') {
-      if (!searchId) {
-        fetchQuestions(currentPage, filterTopic, filterDifficulty);
-      }
-    }
-  }, [activeTab, currentPage]);
-
-  useEffect(() => {
-    if (activeTab === 'users') {
-      fetchUsers();
-    } else {
-      setIsLoading(false);
-    }
-  }, [activeTab]);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setIsLoading(true);
     setError('');
     try {
@@ -139,9 +137,6 @@ export function AdminPage() {
 
       if (await handleAuthError(response)) return;
 
-      // Token claims are stale (this user was just promoted). Refresh the token
-      // and retry once. Also dispatch auth:token_stale so UserContext updates
-      // user.role immediately — the admin badge on Dashboard will reflect this.
       if (response.status === 403) {
         const data = await response.json().catch(() => ({}));
         if (data.detail === 'TOKEN_STALE') {
@@ -156,45 +151,78 @@ export function AdminPage() {
       if (!response.ok) throw new Error('Failed to fetch users');
       const data = await response.json();
       setUsers(data);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('An unknown error occurred');
+      }
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [handleAuthError]);
 
-  const handleModalSuccess = async (updatedData?: any) => {
-  if (!updatedData) return;
+  const fetchMetadata = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('peerprep_token');
+      const headers = { 'Authorization': `Bearer ${token}` };
 
-  if (modalConfig.mode === 'edit') {
-    // For Edits, we keep the search criteria because the admin 
-    // likely wants to stay in their filtered view. It may show some stale value 
-    // (ie. the new update might be out of place from the current search, 
-    // but it just brings more convinience for the admin to be in this way)
-    setManagedQuestion(updatedData);
-    setQuestions(prev =>
-      prev.map(q =>
-        q.question_id.toString() === updatedData.question_id.toString()
-          ? { ...q, title: updatedData.title, topic: updatedData.topic, difficulty: updatedData.difficulty }
-          : q
-      )
-    );
-  } else {
-    // For Adds, we reset the search state 
-    setSearchId('');
-    setFilterTopic('All');
-    setFilterDifficulty('All');
-    setActiveSearchMode('none'); 
+      const [topicsRes, diffRes] = await Promise.all([
+        fetch(`${GATEWAY_URL}/question/topics`, { headers }),
+        fetch(`${GATEWAY_URL}/question/difficulties`, { headers })
+      ]);
 
-    if (currentPage === totalPages) {
-      await fetchQuestions(currentPage, 'All', 'All');
-    } else {
-      await fetchQuestions(1, 'All', 'All'); 
+      if (await handleAuthError(topicsRes) || await handleAuthError(diffRes)) return;
+      if (topicsRes.ok && diffRes.ok) {
+        setAvailableTopics(await topicsRes.json());
+        setAvailableDifficulties(await diffRes.json());
+      }
+    } catch (err) {
+      console.error("Metadata fetch failed", err);
     }
-    setManagedQuestion(updatedData);
-  }
-  await refreshMetadata();
-};
+  }, [handleAuthError]);
+
+  useEffect(() => {
+    if (activeTab === 'questions') {
+      if (activeSearchMode !== 'id') {
+        fetchQuestions(currentPage, filterTopic, filterDifficulty);
+      }
+    } else if (activeTab === 'users') {
+      fetchUsers();
+    }
+  }, [activeTab, currentPage, fetchQuestions, fetchUsers, filterTopic, filterDifficulty, activeSearchMode]);
+
+  useEffect(() => {
+    fetchMetadata();
+  }, [fetchMetadata]);
+
+  const handleModalSuccess = async (updatedData?: Question) => {
+    if (!updatedData) return;
+
+    if (modalConfig.mode === 'edit') {
+      setManagedQuestion(updatedData);
+      setQuestions(prev =>
+        prev.map(q =>
+          q.question_id.toString() === updatedData.question_id.toString()
+            ? { ...q, title: updatedData.title, topic: updatedData.topic, difficulty: updatedData.difficulty }
+            : q
+        )
+      );
+    } else {
+      setSearchId('');
+      setFilterTopic('All');
+      setFilterDifficulty('All');
+      setActiveSearchMode('none'); 
+
+      if (currentPage === totalPages) {
+        await fetchQuestions(currentPage, 'All', 'All');
+      } else {
+        await fetchQuestions(1, 'All', 'All'); 
+      }
+      setManagedQuestion(updatedData);
+    }
+    await fetchMetadata();
+  };
 
   const fetchQuestionDetails = async (id: string) => {
     setActionLoading(`fetching-${id}`);
@@ -207,8 +235,8 @@ export function AdminPage() {
       if (!response.ok) throw new Error('Failed to fetch details');
       const data = await response.json();
       setManagedQuestion(data);
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) alert(err.message);
     } finally {
       setActionLoading(null);
     }
@@ -218,7 +246,6 @@ export function AdminPage() {
     if (e) e.preventDefault();
     if (!searchId.trim()) return;
 
-    // Clear Metadata Filters and previous managed question
     setFilterTopic('All');
     setFilterDifficulty('All');
     setManagedQuestion(null);
@@ -238,19 +265,17 @@ export function AdminPage() {
       setTotalPages(1); 
       setCurrentPage(1);
       setActiveSearchMode('id');
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) alert(err.message);
     } finally {
       setActionLoading(null);
     }
   };
 
   const handleMetadataSearch = () => {
-    // Clear ID Search and previous managed question
     setSearchId('');
     setManagedQuestion(null);
 
-    // Perform the fetch
     fetchQuestions(1, filterTopic, filterDifficulty);
     if (filterTopic === 'All' && filterDifficulty === 'All') {
       setActiveSearchMode('none');
@@ -262,63 +287,13 @@ export function AdminPage() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // Only scroll if a question was actually expanded (managedQuestion is not null)
     if (managedQuestion && scrollRef.current) {
       scrollRef.current.scrollIntoView({
         behavior: 'smooth',
-        block: 'start' // Aligns the top of the card to the top of the screen
+        block: 'start'
       });
     }
   }, [managedQuestion]);
-
-  
-
-  const fetchMetadata = async () => {
-    try {
-      const token = localStorage.getItem('peerprep_token');
-      const headers = { 'Authorization': `Bearer ${token}` };
-
-      const [topicsRes, diffRes] = await Promise.all([
-        fetch(`${GATEWAY_URL}/question/topics`, { headers }),
-        fetch(`${GATEWAY_URL}/question/difficulties`, { headers })
-      ]);
-
-      if (await handleAuthError(topicsRes) || await handleAuthError(diffRes)) return;
-      if (topicsRes.ok && diffRes.ok) {
-        const topics = await topicsRes.json();
-        const difficulties = await diffRes.json();
-        setAvailableTopics(topics);
-        setAvailableDifficulties(difficulties);
-      }
-    } catch (err) {
-      console.error("Metadata fetch failed", err);
-    }
-  };
-
-
-  useEffect(() => {
-    fetchMetadata();
-  }, []);
-
-  const refreshMetadata = async () => {
-    try {
-      const token = localStorage.getItem('peerprep_token');
-      const headers = { 'Authorization': `Bearer ${token}` };
-
-      const [topicsRes, diffRes] = await Promise.all([
-        fetch(`${GATEWAY_URL}/question/topics`, { headers }),
-        fetch(`${GATEWAY_URL}/question/difficulties`, { headers })
-      ]);
-
-      if (await handleAuthError(topicsRes) || await handleAuthError(diffRes)) return;
-      if (topicsRes.ok && diffRes.ok) {
-        setAvailableTopics(await topicsRes.json());
-        setAvailableDifficulties(await diffRes.json());
-      }
-    } catch (err) {
-      console.error("Metadata refresh failed", err);
-    }
-  };
   
   const handleTabChange = (tab: AdminTab) => {    
     setManagedQuestion(null); 
@@ -326,16 +301,7 @@ export function AdminPage() {
     setActiveTab(tab);
   };
 
-  // Update your fetchQuestions call inside useEffect
-  useEffect(() => {
-    if (activeTab === 'questions') {
-      if (questions.length === 1 && totalPages === 1) return;
-      fetchQuestions(currentPage, filterTopic, filterDifficulty);
-    }
-  }, [activeTab, currentPage]); 
-
-
-  const handleDeleteQuestion = async (questionId: string) => {
+  const handleDeleteQuestion = async (questionId: string | number) => {
     if (!window.confirm('Are you sure you want to delete this question?')) return;
 
     setActionLoading(`delete-q-${questionId}`);
@@ -356,7 +322,6 @@ export function AdminPage() {
         setManagedQuestion(null);
       }
 
-      // Logic for jumping back a page if the current one becomes empty
       if (updatedQuestions.length === 0 && currentPage > 1) {
         setCurrentPage(prev => prev - 1);
       } else if (updatedQuestions.length === 0 && currentPage === 1) {
@@ -364,9 +329,9 @@ export function AdminPage() {
       }
 
       alert('Question deleted successfully');
-      await refreshMetadata(); // Refresh after successful delete
-    } catch (err: any) {
-      alert(err.message);
+      await fetchMetadata();
+    } catch (err: unknown) {
+      if (err instanceof Error) alert(err.message);
     } finally {
       setActionLoading(null);
     }
@@ -387,8 +352,8 @@ export function AdminPage() {
       if (!response.ok) throw new Error('Failed to promote user');
       
       setUsers(users.map(u => u.user_id === targetUserId ? { ...u, role: 'Admin' } : u));
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) alert(err.message);
     } finally {
       setActionLoading(null);
     }
@@ -412,17 +377,18 @@ export function AdminPage() {
       }
       
       setUsers(users.filter(u => u.user_id !== targetUserId));
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) alert(err.message);
     } finally {
       setActionLoading(null);
     }
   };
 
+  if (!currentUser) return null;
+
   return (
     <div className="min-h-screen p-6 bg-[#2D2942]">
       <div className="max-w-4xl mx-auto">
-        {/* Header */}
         <div className="flex items-center justify-end mb-8 gap-3">
           <div className="flex items-center gap-2 text-[#E8B995] bg-[#3A3552] px-4 py-2 rounded-full font-bold">
             <Shield className="w-5 h-5" />
@@ -436,7 +402,6 @@ export function AdminPage() {
           </button>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-4 mb-8">
           <button
             onClick={() => handleTabChange('users')}
@@ -464,7 +429,6 @@ export function AdminPage() {
           </div>
         )}
 
-        {/* Content Area */}
         <div className="card-purple">
           {activeTab === 'users' ? (
             <>
@@ -534,7 +498,6 @@ export function AdminPage() {
                 </button>
               </div>
                 <div className="space-y-3 mb-8">
-                  {/* Choice 1: Search by ID */}
                   <div className="space-y-3">
                     <form onSubmit={handleLookupQuestion} className="flex gap-3">
                       <div className="relative flex-1">
@@ -551,7 +514,6 @@ export function AdminPage() {
                     </form>
                   </div>
 
-                  {/*  Separator */}
                   <div className="relative flex items-center py-1">
                     <div className="flex-grow h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
                     <span className="flex-none mx-4 text-gray-500 font-bold italic text-[12px] uppercase tracking-[0.3em]">
@@ -560,7 +522,6 @@ export function AdminPage() {
                     <div className="flex-grow h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
                   </div>
 
-                  {/* Choice 2: Search by Topic/Difficulty */}
                   <div className="space-y-3">
                     <div className="flex flex-wrap gap-3">
                       <select
@@ -588,8 +549,6 @@ export function AdminPage() {
                         <Search className="w-4 h-4" /> Search by Criteria
                       </button>
 
-                      {/* Global Clear Search */}
-                      
                         <button
                           disabled={!isFiltered}
                           onClick={() => {
@@ -605,13 +564,10 @@ export function AdminPage() {
                         >
                           <X className="w-4 h-4" /> Reset All
                         </button>
-                      
                     </div>
                   </div>
                 </div>
 
-
-              {/* The Expandable List */}
               <div className="space-y-4">
                 {isLoading ? (
                   <div className="flex justify-center py-12"><Loader2 className="animate-spin text-[#E8B995]" /></div>
@@ -627,28 +583,22 @@ export function AdminPage() {
                         className={`transition-all duration-300 rounded-[24px] overflow-hidden border-2 ${isExpanded ? 'bg-[#3A3552] border-[#E8B995] shadow-xl' : 'bg-[#3A3552]/40 border-transparent hover:border-white/10'
                           }`}
                       >
-                        {/* The main clickable header area */}
-                        
                         <div
                           ref={isExpanded ? scrollRef : null}
                           style={{ scrollMarginTop: '20px' }}
                           className="p-5 flex items-center justify-between cursor-pointer group"
                           onClick={() => {
-                            // If we only have 1 question in the list, we are in "Search Mode"
-                            // Prevent collapsing in this mode
                             const isSearchMode = questions.length === 1 && searchId !== '';
 
                             if (isExpanded) {
                               if (!isSearchMode) {
                                 setManagedQuestion(null);
                               }
-                              // If isSearchMode, we do nothing (keep it expanded)
                             } else {
                               fetchQuestionDetails(q.question_id.toString());
                             }
                           }}
                         >
-                          {/* LEFT SIDE INFO (Now inside the clickable div) */}
                           <div className="flex items-center gap-4 min-w-0">
                             <span className="text-[#E8B995] font-mono font-bold flex-shrink-0">#{q.question_id}</span>
                             <div className="min-w-0">
@@ -662,9 +612,7 @@ export function AdminPage() {
                             </div>
                           </div>
 
-                          {/* RIGHT SIDE ICONS */}
                           <div className="flex items-center gap-3">
-                            {/* Update the loading check to use the specific ID */}
                             {actionLoading === `fetching-${q.question_id}` && (
                               <Loader2 className="w-4 h-4 animate-spin text-[#E8B995]" />
                             )}
@@ -672,12 +620,10 @@ export function AdminPage() {
                           </div>
                         </div>
 
-                        {/* Expandable Content (The "Deep" View) */}
-                        {isExpanded && (
+                        {isExpanded && managedQuestion && (
                           <div className="p-8 pt-0 space-y-8 animate-in fade-in slide-in-from-top-4">
                             <div className="h-px bg-white/5 w-full mb-6" />
                             
-                            {/* Reuse your existing Managed Question UI here */}
                             <div className="flex justify-end gap-2">
                               <button 
                                 onClick={() => setModalConfig({ isOpen: true, mode: 'edit', data: managedQuestion })} 
@@ -694,7 +640,7 @@ export function AdminPage() {
                               <label className="text-gray-400 text-xs font-bold uppercase tracking-wider">Problem Statement</label>
                               <div className="prose prose-invert max-w-none text-white bg-[#2D2942]/50 p-6 rounded-[20px] border border-white/5">
                                 <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                  {managedQuestion.statement}
+                                  {managedQuestion.statement || ''}
                                 </ReactMarkdown>
                               </div>
                             </div>
@@ -723,7 +669,7 @@ export function AdminPage() {
                             <div className="space-y-2">
                               <label className="text-gray-400 text-xs font-bold uppercase tracking-wider">Python Template</label>
                               <div className="rounded-[20px] overflow-hidden border border-white/5">
-                                <CodeMirror value={managedQuestion.template} theme={dracula} extensions={[python()]} readOnly={true} />
+                                <CodeMirror value={managedQuestion.template || ''} theme={dracula} extensions={[python()]} readOnly={true} />
                               </div>
                             </div>
                           </div>
@@ -734,7 +680,6 @@ export function AdminPage() {
                 )}
               </div>
 
-              {/* Pagination Controls moved below the list */}
               <div className="flex flex-wrap items-center justify-center gap-4 mt-12 pb-8">
                 <button
                   disabled={currentPage === 1}

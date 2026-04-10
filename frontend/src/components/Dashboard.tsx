@@ -14,7 +14,7 @@ export function Dashboard() {
   const [availableDifficulties, setAvailableDifficulties] = useState<string[]>([]);
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(true);
 
-  const isAdmin = user.role?.toLowerCase() === 'admin' || user.role?.toLowerCase() === 'root' || user.username === 'Root';
+  const isAdmin = user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'root' || user?.username === 'Root';
 
   // Admins should not see the user dashboard — redirect to admin panel.
   // This covers: admin login, mid-session promotion (via visibilitychange or
@@ -60,7 +60,7 @@ export function Dashboard() {
     }
   }, [user, isAdmin]);
 
-  if (isAdmin) return null; // prevent flash of user dashboard while redirecting
+  if (!user || isAdmin) return null; // prevent flash of user dashboard while redirecting
 
   const toggleDifficulty = (diff: string) => {
     setSelectedDifficulties(prev =>

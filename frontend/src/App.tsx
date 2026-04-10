@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { UserProvider, useUser } from './contexts/UserContext';
 import { LandingPage } from './components/LandingPage';
@@ -35,31 +35,23 @@ function ActiveSessionRedirect({ children }: { children: React.ReactNode }) {
   const { user, loading } = useUser();
   const navigate = useNavigate();
   const location = useLocation();
-  const [checked, setChecked] = useState(false);
-  const checkedForUserRef = useRef<string | null>(null);
+  const [checked, setChecked] = useState(() => location.pathname.startsWith('/session/'));
+  const [lastUserUid, setLastUserUid] = useState<string | null>(user?.uid || null);
+
+  // Adjust state during render to avoid synchronous setState in useEffect
+  if (location.pathname.startsWith('/session/') && !checked) {
+    setChecked(true);
+  } else if (!user && !loading && !checked) {
+    setChecked(true);
+  } else if (user && lastUserUid !== user.uid && checked) {
+    setLastUserUid(user.uid);
+    setChecked(false);
+  }
 
   useEffect(() => {
-    if (location.pathname.startsWith('/session/')) {
-      setChecked(true);
-      return;
-    }
-
-    if (!user) {
-      // Only allow children to render if auth is fully resolved (not loading)
-      // and user is genuinely not logged in
-      if (!loading) {
-        setChecked(true);
-      }
-      return;
-    }
-
-    // When user becomes available (login or rehydration), block rendering
-    // and check for active sessions before allowing navigation
-    if (checkedForUserRef.current !== user.uid) {
-      checkedForUserRef.current = user.uid;
-      setChecked(false);
-    }
-
+    // If we already transitioned state synchronously above, skip the async check
+    if (location.pathname.startsWith('/session/')) return;
+    if (!user) return;
     if (checked) return;
 
     let cancelled = false;

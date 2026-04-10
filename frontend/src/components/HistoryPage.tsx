@@ -6,7 +6,7 @@
  * History Service API.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Loader2, ChevronRight, Calendar, Clock, Code2, Search, X } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
@@ -80,7 +80,7 @@ export function HistoryPage() {
     };
 
     // Fetch paginated list 
-    const fetchHistory = async (page: number, topic = 'All', difficulty = 'All') => {
+    const fetchHistory = useCallback(async (page: number, topic = 'All', difficulty = 'All') => {
         setIsLoading(true);
         setError('');
         try {
@@ -101,12 +101,16 @@ export function HistoryPage() {
             setTotalPages(data.total_pages);
             setCurrentPage(data.current_page);
             setIsFiltered(topic !== 'All' || difficulty !== 'All');
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            if (err instanceof Error) {
+              setError(err.message);
+            } else {
+              setError('An unknown error occurred while fetching history');
+            }
         } finally {
             setIsLoading(false);
         }
-    };
+    }, []);
 
     // Initial loads
     useEffect(() => {
@@ -117,7 +121,7 @@ export function HistoryPage() {
         if (currentUser?.uid) {
             fetchHistory(currentPage, filterTopic, filterDifficulty);
         }
-    }, [currentPage, currentUser]);
+    }, [currentPage, currentUser, filterTopic, filterDifficulty, fetchHistory]);
 
     const handleSearch = () => {
         setSelectedAttempt(null); // Close any expanded item
@@ -151,8 +155,12 @@ export function HistoryPage() {
 
             const data = await response.json();
             setSelectedAttempt(data);
-        } catch (err: any) {
-            alert(err.message);
+        } catch (err: unknown) {
+            if (err instanceof Error) {
+              alert(err.message);
+            } else {
+              alert('An unknown error occurred while fetching attempt details');
+            }
         } finally {
             setFetchingDetail(null);
         }

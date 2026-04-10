@@ -93,12 +93,12 @@ export function DynamicArrayInput({
                         remarkPlugins={[remarkMath]} 
                         rehypePlugins={[rehypeKatex]}
                         components={{
-                          ol: ({node, ...props}) => <ol className="list-decimal pl-4 mb-2" {...props} />,
-                          ul: ({node, ...props}) => <ul className="list-disc pl-4 mb-2" {...props} />,
-                          li: ({node, ...props}) => <li className="mb-1" {...props} />,
-                          p: ({node, ...props}) => <p className="leading-relaxed break-words whitespace-pre-wrap" {...props} />,
-                          code: ({node, ...props}) => <code className="bg-[#3A3552] px-1 rounded text-[#E8B995] break-all" {...props} />,
-                          pre: ({node, ...props}) => <pre className="bg-[#3A3552]/50 p-4 rounded-xl overflow-x-auto custom-scrollbar" {...props} />
+                          ol: ({ ...props }) => <ol className="list-decimal pl-4 mb-2" {...props} />,
+                          ul: ({ ...props }) => <ul className="list-disc pl-4 mb-2" {...props} />,
+                          li: ({ ...props }) => <li className="mb-1" {...props} />,
+                          p: ({ ...props }) => <p className="leading-relaxed break-words whitespace-pre-wrap" {...props} />,
+                          code: ({ ...props }) => <code className="bg-[#3A3552] px-1 rounded text-[#E8B995] break-all" {...props} />,
+                          pre: ({ ...props }) => <pre className="bg-[#3A3552]/50 p-4 rounded-xl overflow-x-auto custom-scrollbar" {...props} />
                         }}
                       >
                         {item || "*No content provided.*"}

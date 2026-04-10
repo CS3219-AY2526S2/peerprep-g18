@@ -20,7 +20,7 @@ export function AuthPage() {
     password: '',
     confirmPassword: ''
   });
-  const [errors, setErrors] = useState<any>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const validateEmail = (email: string) => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -40,7 +40,7 @@ export function AuthPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newErrors: any = {};
+    const newErrors: Record<string, string> = {};
 
     if (!isLogin) {
       if (!validateUsername(formData.username)) {
@@ -120,8 +120,12 @@ export function AuthPage() {
 
           setRegistrationSuccess(true);
         }
-      } catch (err: any) {
-        setErrors({ email: err.message });
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          setErrors({ email: err.message });
+        } else {
+          setErrors({ email: 'An unknown error occurred during authentication' });
+        }
       } finally {
         setIsLoading(false);
       }

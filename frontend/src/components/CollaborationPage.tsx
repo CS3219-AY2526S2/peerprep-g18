@@ -178,7 +178,7 @@ export function CollaborationPage() {
         }
 
         setLoading(false);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (cancelled) return;
         console.error('Session data fetch error:', err);
         toast.error('Failed to load session data');
@@ -188,7 +188,7 @@ export function CollaborationPage() {
 
     fetchSessionData();
     return () => { cancelled = true; };
-  }, [sessionId, user, navigate]);
+  }, [sessionId, user, navigate, isAdmin]);
 
   // --- 3b/3c. Editor Socket + Yjs ---
   useEffect(() => {
@@ -273,8 +273,8 @@ export function CollaborationPage() {
             editorSocket.io.opts.query = { ticket: newTicket };
             editorSocket.connect();
             toast('Reconnecting editor...');
-          } catch (err: any) {
-            if (err?.message === 'SESSION_ENDED') {
+          } catch (err: unknown) {
+            if (err instanceof Error && err.message === 'SESSION_ENDED') {
               toast.error('This session has ended.');
               navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
               return;
@@ -284,14 +284,14 @@ export function CollaborationPage() {
         });
 
         // On local Yjs changes, emit to server
-        ydoc.on('update', (update: Uint8Array, origin: any) => {
+        ydoc.on('update', (update: Uint8Array, origin: string | null) => {
           if (origin !== 'remote') {
             editorSocket.emit('yjs-update', update);
           }
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (cleaned) return;
-        if (err?.message === 'SESSION_ENDED') {
+        if (err instanceof Error && err.message === 'SESSION_ENDED') {
           toast.error('This session has ended.');
           navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
           return;
@@ -311,7 +311,7 @@ export function CollaborationPage() {
       ydoc.destroy();
       if (partnerTimeoutRef.current) clearTimeout(partnerTimeoutRef.current);
     };
-  }, [loading, sessionId]);
+  }, [loading, sessionId, isAdmin, navigate]);
 
   // --- 4a/4b. Chat Socket ---
   useEffect(() => {
@@ -340,7 +340,7 @@ export function CollaborationPage() {
           const mapped = history.map(msg => ({
             ...msg,
             sender: msg.sender === user.uid
-              ? (user.username || user.Username)
+              ? (user.username)
               : msg.sender === 'Gemini' ? 'Gemini' : (partnerRef.current?.username || 'Partner')
           }));
           setMessages(mapped);
@@ -348,7 +348,7 @@ export function CollaborationPage() {
 
         chatSocket.on('receive-message', (msg: { sender: string; text: string; time: string }) => {
           const displayName = msg.sender === user.uid
-            ? (user.username || user.Username)
+            ? (user.username)
             : msg.sender === 'Gemini' ? 'Gemini' : (partnerRef.current?.username || 'Partner');
           setMessages(prev => [...prev, { ...msg, sender: displayName }]);
         });
@@ -360,14 +360,14 @@ export function CollaborationPage() {
             if (cleaned || sessionEndedRef.current) return;
             chatSocket.io.opts.query = { ticket: newTicket };
             chatSocket.connect();
-          } catch (err: any) {
-            if (err?.message === 'SESSION_ENDED') return; // editor handler already redirects
+          } catch (err: unknown) {
+            if (err instanceof Error && err.message === 'SESSION_ENDED') return; // editor handler already redirects
             toast.error('Failed to reconnect chat');
           }
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (cleaned) return;
-        if (err?.message === 'SESSION_ENDED') {
+        if (err instanceof Error && err.message === 'SESSION_ENDED') {
           toast.error('This session has ended.');
           navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
           return;
@@ -383,7 +383,7 @@ export function CollaborationPage() {
       cleaned = true;
       chatSocket?.disconnect();
     };
-  }, [loading, sessionId, user]);
+  }, [loading, sessionId, user, isAdmin, navigate]);
 
   // Auto-scroll chat only when messages change (and not on initial load if possible)
   useEffect(() => {
@@ -477,7 +477,7 @@ export function CollaborationPage() {
     );
   }
 
-  const displayUsername = user?.username || user?.Username || 'You';
+  const displayUsername = user?.username || 'You';
   const partnerUsername = partner?.username || 'Partner';
 
   return (
@@ -660,7 +660,7 @@ export function CollaborationPage() {
                   const isSystem = msg.sender === 'System';
                   const isGemini = msg.sender === 'Gemini';
                   const avatarSrc = isOwn
-                    ? user.avatar
+                    ? user?.avatar
                     : isGemini ? 'https://api.dicebear.com/9.x/bottts/svg?seed=Riley' : avatarUrl(partner?.avatar_id ?? 1);
 
                   if (isSystem) {

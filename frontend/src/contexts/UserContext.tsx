@@ -1,13 +1,23 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { toast } from 'sonner';
 import { auth } from '../firebase';
 import { GATEWAY_URL } from '../constants';
 import { avatarUrl } from '../utils/avatar';
 
+export interface UserProfile {
+  uid: string;
+  user_id: string;
+  username: string;
+  email: string;
+  role: 'User' | 'Admin' | 'Root';
+  avatar_id: number;
+  avatar: string;
+}
+
 interface UserContextType {
-  user: any;
-  setUser: (user: any) => void;
+  user: UserProfile | null;
+  setUser: React.Dispatch<React.SetStateAction<UserProfile | null>>;
   loading: boolean;
   handleLoginSuccess: (uid: string, token: string) => Promise<void>;
   handleLogout: () => Promise<void>;
@@ -17,25 +27,25 @@ interface UserContextType {
 const UserContext = createContext<UserContextType>(null!);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const hasRehydrated = useRef(false);
 
   // Patches the in-memory user state after a successful avatar update,
   // avoiding a full profile re-fetch.
   const updateAvatar = (avatarId: number) => {
-    setUser((prev: any) => ({
+    setUser((prev) => prev ? ({
       ...prev,
       avatar_id: avatarId,
       avatar: avatarUrl(avatarId)
-    }));
+    }) : null);
   };
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await signOut(auth);
     localStorage.removeItem('peerprep_token');
     setUser(null);
-  };
+  }, []);
 
   // handleLoginSuccess fetches the user profile from the gateway.
   //
@@ -43,7 +53,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   // detected we force-refresh the Firebase token and call this function once
   // more. The flag prevents a second refresh attempt if the fresh token still
   // somehow triggers TOKEN_STALE (should not happen in practice).
-  const handleLoginSuccess = async (uid: string, token: string, isRetryAfterRefresh = false) => {
+  const handleLoginSuccess = useCallback(async (uid: string, token: string, isRetryAfterRefresh = false) => {
     const maxRetries = 5;
     let attempt = 0;
 
@@ -108,7 +118,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         return;
       }
     }
-  };
+  }, [handleLogout]);
 
   // Visibility-based token refresh.
   //
@@ -133,7 +143,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-  }, []);
+  }, [handleLoginSuccess]);
 
   // Mid-session auth event handlers.
   //
@@ -170,7 +180,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('auth:token_stale', onTokenStale);
       window.removeEventListener('auth:account_deleted', onAccountDeleted);
     };
-  }, []);
+  }, [handleLoginSuccess, handleLogout]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -194,7 +204,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [handleLoginSuccess, handleLogout]);
 
   return (
     <UserContext.Provider value={{ user, setUser, loading, handleLoginSuccess, handleLogout, updateAvatar }}>
@@ -203,6 +213,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useUser() {
   return useContext(UserContext);
 }
+
