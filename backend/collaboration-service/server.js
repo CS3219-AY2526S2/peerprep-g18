@@ -7,7 +7,7 @@ const { createAdapter } = require('@socket.io/redis-adapter');
 const Y = require('yjs');
 const axios = require('axios');
 
-// --- CONSTANTS ---
+const MAX_GEMINI_PROMPT_LENGTH = 300;
 const MAX_GEMINI_USAGE = 3;
 const MATCHING_SESSION_DURATION = 7200; // 2 hours in seconds
 const REDUCE_USAGE_ON_FAIL = true;      // Allow retry if AI service fails
@@ -372,7 +372,19 @@ chatNs.on('connection', async (socket) => {
       const geminiPrompt = sanitizedText.trim().substring(7).trim();
       if (!geminiPrompt) return;
 
-      // 1. Check Usage Limit (Immediate feedback)
+      // 1. Check Prompt Length
+      if (geminiPrompt.length > MAX_GEMINI_PROMPT_LENGTH) {
+        const errorMsg = {
+          sender: 'Gemini',
+          text: `Prompt too long. Max ${MAX_GEMINI_PROMPT_LENGTH} characters allowed for Gemini.`,
+          time: new Date().toISOString()
+        };
+        await redisClient.rPush(`session:${sessionId}:chat`, JSON.stringify(errorMsg));
+        chatNs.to(sessionId).emit('receive-message', errorMsg);
+        return;
+      }
+
+      // 2. Check Usage Limit (Immediate feedback)
       const usageKey = `session:${sessionId}:gemini_usage`;
       redisClient.incr(usageKey).then(async (currentUsage) => {
         if (currentUsage === 1) await redisClient.expire(usageKey, MATCHING_SESSION_DURATION);
@@ -383,11 +395,12 @@ chatNs.on('connection', async (socket) => {
             text: `Sorry, this session has reached the limit of ${MAX_GEMINI_USAGE} Gemini requests.`,
             time: new Date().toISOString()
           };
+          await redisClient.rPush(`session:${sessionId}:chat`, JSON.stringify(limitMsg));
           chatNs.to(sessionId).emit('receive-message', limitMsg);
           return;
         }
 
-        // 2. Trigger Background Processing
+        // 3. Trigger Background Processing
         processGeminiCommand(sessionId, geminiPrompt, usageKey);
       }).catch(err => console.error('[Gemini] Usage check error:', err));
     }
@@ -451,11 +464,13 @@ ${currentCode}
       chatNs.to(sessionId).emit('receive-message', aiMessage);
     } catch (aiErr) {
       console.error('[Gemini] AI Service call failed:', aiErr.message);
-      chatNs.to(sessionId).emit('receive-message', {
+      const errorMsg = {
         sender: 'Gemini',
         text: 'Gemini is currently having trouble responding. Please try again later.',
         time: new Date().toISOString()
-      });
+      };
+      await redisClient.rPush(`session:${sessionId}:chat`, JSON.stringify(errorMsg));
+      chatNs.to(sessionId).emit('receive-message', errorMsg);
       
       if (REDUCE_USAGE_ON_FAIL) {
         await redisClient.decr(usageKey);
