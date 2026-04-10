@@ -13,7 +13,7 @@ export function MatchingPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [dots, setDots] = useState('');
   
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasRequestedRef = useRef(false);
   const isTransitioningRef = useRef(false);
 
