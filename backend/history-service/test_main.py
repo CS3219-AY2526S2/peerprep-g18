@@ -25,9 +25,7 @@ def test_get_user_history_empty():
     mock_db.collection.return_value.where.return_value.select.return_value.order_by.return_value.limit.return_value.offset.return_value.stream.return_value = []
     
     # Mock count result
-    mock_count = MagicMock()
-    mock_count.value = 0
-    mock_db.collection.return_value.where.return_value.count.return_value.get.return_value = [[MagicMock(value=mock_count)]]
+    mock_db.collection.return_value.where.return_value.count.return_value.get.return_value = [[MagicMock(value=0)]]
     
     # Correct endpoint is /history/user and requires X-User-Id header
     response = client.get("/history/user", headers={"X-User-Id": "test-uid"})

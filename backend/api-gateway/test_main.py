@@ -7,9 +7,10 @@ import httpx
 mock_redis = MagicMock()
 mock_http_client = AsyncMock()
 
+import firebase_admin.auth
 with patch('firebase_admin.credentials.Certificate'), \
      patch('firebase_admin.initialize_app'), \
-     patch('firebase_admin.auth'), \
+     patch('firebase_admin.auth', spec=firebase_admin.auth), \
      patch('redis.asyncio.Redis', return_value=mock_redis), \
      patch('httpx.AsyncClient', return_value=mock_http_client):
     from main import app
