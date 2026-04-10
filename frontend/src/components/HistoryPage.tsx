@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Loader2, ChevronRight, Calendar, Clock, Tag, Code2, Search, X, Users } from 'lucide-react';
+import { ArrowLeft, BookOpen, Loader2, ChevronRight, Calendar, Clock, Code2, Search, X } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
 import ReactMarkdown from 'react-markdown';
@@ -43,7 +43,7 @@ interface HistoryDetail extends HistoryMetadata {
 
 export function HistoryPage() {
     const navigate = useNavigate();
-    const { user: currentUser, handleLogout } = useUser();
+    const { user: currentUser } = useUser();
     const scrollRef = useRef<HTMLDivElement | null>(null);
 
 

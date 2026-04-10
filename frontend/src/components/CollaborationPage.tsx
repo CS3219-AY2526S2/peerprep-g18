@@ -93,7 +93,6 @@ export function CollaborationPage() {
 
   const isAdmin = user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'root';
 
-  const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null);
   const [question, setQuestion] = useState<Question | null>(null);
   const [partner, setPartner] = useState<PartnerInfo | null>(null);
   const [partnerOnline, setPartnerOnline] = useState(false);
@@ -159,7 +158,6 @@ export function CollaborationPage() {
           throw new Error('Failed to fetch session');
         }
         const meta: SessionMeta = await sessionRes.json();
-        setSessionMeta(meta);
         startedAtRef.current = new Date(meta.startedAt).getTime();
 
         // Determine partner UID

@@ -10,7 +10,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, Save, LogOut, ChevronRight } from 'lucide-react';
+import { Shield, Trash2, Loader2, Star, Users, BookOpen, Plus, X, Search, LogOut, ChevronRight } from 'lucide-react';
 import { GATEWAY_URL } from '../constants';
 import { auth } from '../firebase';
 import { DynamicArrayInput } from './ui/DynamicArrayInput';
@@ -785,7 +785,6 @@ export function AdminPage() {
         onClose={() => setModalConfig({ ...modalConfig, isOpen: false })}
         onSuccess={handleModalSuccess}
         topics={availableTopics}
-        difficulties={availableDifficulties}
       />
 
       <style>{`

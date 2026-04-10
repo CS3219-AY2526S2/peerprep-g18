@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Plus, X, Eye, EyeOff } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Edit2, Check, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Edit2, Check, Loader2, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { GATEWAY_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
@@ -268,20 +268,31 @@ export function ProfilePage() {
             <button onClick={() => setIsChangingPassword(true)} className="w-full py-3 rounded-full border-2 border-[#4A4563] text-[#4A4563] font-bold">Change Password</button>
           ) : (
             <div className="space-y-4">
-              <input
-                type={showPasswords ? 'text' : 'password'}
-                placeholder="New Password"
-                value={passwordData.newPassword}
-                onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
-                className="w-full bg-white border-2 border-[#4A4563] rounded-full px-5 py-3 text-[#4A4563]"
-              />
-              <input
-                type={showPasswords ? 'text' : 'password'}
-                placeholder="Confirm New Password"
-                value={passwordData.confirmPassword}
-                onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
-                className="w-full bg-white border-2 border-[#4A4563] rounded-full px-5 py-3 text-[#4A4563]"
-              />
+              <div className="relative">
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  placeholder="New Password"
+                  value={passwordData.newPassword}
+                  onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
+                  className="w-full bg-white border-2 border-[#4A4563] rounded-full px-5 py-3 text-[#4A4563] pr-12"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasswords(!showPasswords)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-[#4A4563] hover:text-[#E8B995] transition-colors"
+                >
+                  {showPasswords ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  placeholder="Confirm New Password"
+                  value={passwordData.confirmPassword}
+                  onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                  className="w-full bg-white border-2 border-[#4A4563] rounded-full px-5 py-3 text-[#4A4563] pr-12"
+                />
+              </div>
               {errors.confirmPassword && (
                 <p className="text-red-600 text-sm mt-1 ml-4">{errors.confirmPassword}</p>
               )}

@@ -13,10 +13,9 @@ interface QuestionModalProps {
   mode: 'add' | 'edit';
   initialData?: any;
   topics: string[];
-  difficulties: string[];
 }
 
-export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, topics, difficulties }: QuestionModalProps) {
+export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, topics }: QuestionModalProps) {
   const [formData, setFormData] = useState({
     title: '',
     topic: 'Arrays',
@@ -29,23 +28,21 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
   });
   
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [existingTopics, setExistingTopics] = useState<string[]>([]);
   const [isCreatingNewTopic, setIsCreatingNewTopic] = useState(false);
   const [newTopicInput, setNewTopicInput] = useState('');
-  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const [initialRef, setInitialRef] = useState(JSON.stringify(formData));
  
   useEffect(() => {
     if (isOpen) {
         const dataToLoad = (mode === 'edit' && initialData) ? initialData : {
-        title: '', topic: existingTopics[0] || 'Arrays', difficulty: 'Easy',
+        title: '', topic: topics[0] || 'Arrays', difficulty: 'Easy',
         statement: '', template: '', examples: [''],
         constraints: [''], hints: ['']
         };
         setFormData(dataToLoad);
         setInitialRef(JSON.stringify(dataToLoad));
     }
-    }, [isOpen, mode, initialData, existingTopics]);
+    }, [isOpen, mode, initialData, topics]);
 
     const hasUnsavedChanges = JSON.stringify(formData) !== initialRef || (isCreatingNewTopic && newTopicInput !== '');
 
