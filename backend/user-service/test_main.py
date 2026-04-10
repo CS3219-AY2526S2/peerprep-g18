@@ -18,20 +18,22 @@ with patch('firebase_admin.credentials.Certificate'), \
     import main
     from main import app
 
-client = TestClient(app)
+@pytest.fixture
+def client():
+    return TestClient(app)
 
 def test_read_main_title():
     """Verify the app title is correct."""
     assert app.title == "PeerPrep User Service (Firebase Auth Version)"
 
-def test_get_user_not_found():
+def test_get_user_not_found(client):
     """Test retrieving a non-existent user."""
     mock_db.collection.return_value.document.return_value.get.return_value.exists = False
     response = client.get("/users/non-existent-id")
     assert response.status_code == 404
     assert response.json() == {"detail": "User profile not found in database"}
 
-def test_get_user_success():
+def test_get_user_success(client):
     """Test retrieving an existing user."""
     mock_user_data = {
         "user_id": "test-uid",
@@ -49,14 +51,14 @@ def test_get_user_success():
     assert response.status_code == 200
     assert response.json() == mock_user_data
 
-def test_lookup_username_not_found():
+def test_lookup_username_not_found(client):
     """Test looking up a username that doesn't exist."""
     mock_db.collection.return_value.stream.return_value = []
     response = client.get("/users/lookup/nonexistent")
     assert response.status_code == 404
     assert response.json() == {"detail": "Username not found"}
 
-def test_lookup_username_success():
+def test_lookup_username_success(client):
     """Test looking up a username successfully."""
     mock_user = MagicMock()
     mock_user.to_dict.return_value = {"username": "TestUser", "email": "test@example.com"}

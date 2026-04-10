@@ -30,6 +30,7 @@ jobs:
   backend-python:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: [api-gateway, user-service, question-service, matching-service, history-service, ai-service]
     steps:
@@ -45,7 +46,7 @@ jobs:
           if [ -f backend/${{ matrix.service }}/requirements.txt ]; then
             pip install -r backend/${{ matrix.service }}/requirements.txt
           fi
-          pip install ruff pytest httpx
+          pip install ruff pytest "httpx==0.27.2" pytest-asyncio
       - name: Create dummy Firebase credentials
         run: |
           # Create dummy firebase-service-account.json if it doesn't exist
