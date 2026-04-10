@@ -130,3 +130,26 @@ This frontend’s UI layout and styling were derived from a Figma Make design fi
 - Some UI components in the design reference shadcn/ui (MIT License): https://ui.shadcn.com/ and https://github.com/shadcn-ui/ui/blob/main/LICENSE.md
 - Photos referenced in the design are from Unsplash (Unsplash License; attribution not required but appreciated): https://unsplash.com/license
 - Avatars used as profile pictures are from Avataaars (Free for personal and commercial use): https://avataaars.com/
+
+---
+
+## Current Application State (April 2026)
+
+The PeerPrep frontend is fully implemented as a high-fidelity React (TypeScript) application, following a **"Cyber-Purple"** aesthetic with dark mode and neon highlights.
+
+### Core Features
+- **Dynamic Auth:** Seamless integration with Firebase Auth (OAuth and Email/Password).
+- **Matchmaking Dashboard:** Interactive selection of topic and difficulty with a 60-second polling-based match timer.
+- **Advanced Collaboration:** 
+  - Real-time shared editor powered by **Yjs** (CRDT) for conflict-free synchronization.
+  - Integrated chat system with instant messaging.
+  - **AI Assistant:** @gemini bot integrated into chat for real-time problem-solving support.
+- **Admin Suite:** Full management of the question bank and user roles (Admin/Root).
+- **History Portal:** Detailed per-user records of past collaborative sessions, including code snapshots.
+
+### Tech Stack & Architecture
+- **Framework:** React 19 + Vite.
+- **Styling:** TailwindCSS v3 for responsive, theme-consistent layouts.
+- **Real-time:** Socket.IO client for editor/chat synchronization.
+- **Auth Proxying:** All sensitive requests are routed through the API Gateway, which injects identity headers (`X-User-Id`).
+- **State Management:** UserContext for global authentication and profile state.

@@ -83,7 +83,7 @@ These keys exist during an active session and are deleted after session cleanup.
 
 | Key Pattern | Type | Remarks |
 |---|---|---|
-| `session:{id}:meta` | String (JSON) | Session metadata. TTL: 2h |
+| `session:{id}:meta` | String (JSON) | Session metadata (uids, topic, diff, qid, ai_requests_left). TTL: 2h |
 | `active_session:{uid}` | String | Current `sessionId` for a user. TTL: 2h |
 | `ticket:{uuid}` | String (JSON) | One-time WebSocket ticket (`{uid, sessionId}`). TTL: 60s |
 | `lock:session_init:{uid_A}:{uid_B}` | String | SETNX leader election lock for session creation. |
@@ -101,8 +101,9 @@ Managed by the Matching Service.
 
 | Key Pattern | Type | Remarks |
 |---|---|---|
-| `queue:{topic}:{difficulty}` | List | UIDs waiting for a match. |
-| `match_ticket:{uid}` | String | Temporary ticket used during match handoff. |
+| `queue:{topic}:{difficulty}` | List | UIDs waiting for a match. (LPUSH/BRPOP) |
+| `timeout_tracker` | ZSET | Sorted set of UIDs with expiry timestamp for 60s timeout. |
+| `match_ticket:{uid}` | String | Temporary ticket (partner UID) stored after match is found. |
 
 ---
 

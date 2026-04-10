@@ -24,8 +24,8 @@ This `docs/` folder contains living documentation for our PeerPrep project (CS32
 - [`plantUML/`](plantUML/)
   PlantUML source files for sequence diagrams:
   - `collab.puml` — Ticket acquisition and WebSocket connection flow
-  - `matchToCollab.puml` — End-to-end flow from matching to collaboration (SSE owned by matching-service; tickets issued by collab-service)
-  - `collabToHistory.puml` — Session end, history save, and Redis cleanup flow (collab-service calls history-service directly, no api-gateway intermediary)
+  - `matchToCollab.puml` — End-to-end flow from matching to collaboration (Polling handled by matching-service; session leader election by api-gateway)
+  - `collabToHistory.puml` — Session end, history save, and Redis cleanup flow (collab-service triggers history-service directly)
   - `question-service-sequence.puml` — Question service interactions
   - `user-service-sequence.puml` — User service interactions
 

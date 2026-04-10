@@ -285,22 +285,15 @@ Remove a user from the matching queue.
   - `200 OK`: Successfully removed from queue.
   - `404 Not Found`: User was not in the queue.
 
-#### `GET /matching/events`
-Subscribe to Server-Sent Events for match notifications. The API Gateway proxies this as a streaming response.
+#### `GET /matching/status`
+Poll for matching status. Returns the partner's UID once a match is found.
 - **Headers:**
-  - `Authorization`: (Required) `Bearer <firebase_id_token>`
-- **Response:** `text/event-stream`
-  ```
-  event: connected
-  data: {}
-
-  event: match_found
-  data: {"sessionId": "uuid", "questionId": "1"}
-
-  event: timeout
-  data: {}
-  ```
-- **Notes:** When a match is found, the matching service runs a distributed leader election (Redis SETNX) to create the session atomically. The session metadata and active-session pointers are written to `redis-sessions`.
+  - `X-User-Id`: (Injected by API Gateway)
+- **Responses:**
+  - `200 OK`: `{"status": "matched", "peer_id": "uid", "topic": "Array", "difficulty": "Easy"}`
+  - `200 OK`: `{"status": "waiting"}`
+  - `200 OK`: `{"status": "timeout"}`
+  - `404 Not Found`: User not in matching process.
 
 ---
 
@@ -326,7 +319,8 @@ Retrieve session metadata. Only accessible by session members.
       "difficulty": "Easy",
       "user1_id": "uid_A",
       "user2_id": "uid_B",
-      "startedAt": 1774017000.0
+      "startedAt": 1774017000.0,
+      "ai_requests_left": 3
     }
     ```
   - `403 Forbidden`: Not a member of this session.
@@ -373,6 +367,7 @@ Ticket is validated by the collab service on connection. On success, `userId` an
 #### Client-to-Server Events
 - `yjs-update`: `Uint8Array` — Send local Yjs document changes to the server. The server persists the update and broadcasts to the partner.
 - `end-session`: (no payload) — User explicitly ends the session. Triggers a code snapshot, saves the user's history, and emits `partner-ended` to the other user.
+- `ai-request`: `{ prompt: string }` — Request Gemini assistance. Uses the current `ydoc` content and problem statement as context. Limited to 3 per session.
 
 #### Server-to-Client Events
 - `yjs-sync`: `Uint8Array` — Full document state sent on connect (or reconnect).
@@ -380,6 +375,8 @@ Ticket is validated by the collab service on connection. On success, `userId` an
 - `user-joined`: `{ userId: string }` — Partner has connected. Also sent to a newly connecting user for each user already in the session.
 - `user-left`: `{ userId: string, message: string }` — Partner has disconnected. A 30-second reconnect window starts; if the partner does not reconnect, `partner-ended` is emitted.
 - `partner-ended`: `{ userId: string }` — Partner has permanently left (either clicked "End Session" or failed to reconnect within 30 seconds). The remaining user is prompted to continue coding solo or end their session.
+- `ai-response`: `{ text: string }` — The response from Gemini.
+- `ai-error`: `{ message: string }` — E.g., "AI request limit reached".
 
 #### Frontend Integration
 ```javascript
@@ -403,6 +400,9 @@ ydoc.on('update', (update, origin) => {
 
 // End session explicitly
 editorSocket.emit('end-session')
+
+// Request AI help
+editorSocket.emit('ai-request', { prompt: "How can I optimize this loop?" })
 
 // Handle partner leaving
 editorSocket.on('partner-ended', () => {
@@ -453,16 +453,17 @@ editorSocket.on('disconnect', async () => {
 ```
 
 ### Session Lifecycle
-1. Match found → `sessionId` created in Redis (2h TTL)
-2. Both users connect (editor + chat)
-3. Real-time collaboration (Yjs + chat)
-4. A user leaves (explicit "End Session" or disconnect):
+1. Match found → Users poll `/matching/status` and receive partner info.
+2. Both users call `POST /session/init` at the Gateway. Leader election ensures atomic creation.
+3. Both users connect to Collab Service (editor + chat) via tickets.
+4. Real-time collaboration (Yjs + chat + AI).
+5. A user leaves (explicit "End Session" or disconnect):
    - **Explicit end:** Code is snapshotted immediately and saved as that user's history. `partner-ended` emitted to the other user.
    - **Disconnect:** 30-second reconnect window. If the user reconnects, session continues normally. If not, treated the same as explicit end (snapshot + save + `partner-ended`).
-5. Remaining user sees a prompt: "Continue coding" or "End session"
+6. Remaining user sees a prompt: "Continue coding" or "End session"
    - **Continue:** User keeps editing solo. Editor + chat remain functional.
    - **End:** User's code is snapshotted and saved as their own history entry.
-6. When all users have disconnected → 30-second cleanup → Redis keys deleted
+7. When all users have disconnected → 5-second cleanup → Redis keys deleted
 
 Each user gets their own history entry with the code snapshot from when **they** left, stored as `{sessionId}_{userId}` in Firestore.
 
@@ -504,7 +505,7 @@ Retrieve all session records for a given user.
 
 ## 7. AI Service
 **Base URL:** `http://ai-service:6771`
-**Purpose:** Provides AI-powered assistance using Google's Gemini models.
+**Purpose:** Provides AI-powered assistance using Google's Gemini models. Proxied through the Collaboration Service to handle session context and limits.
 
 ### Endpoints
 

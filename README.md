@@ -126,17 +126,16 @@ peerprep-g18/
    docker-compose up --build
    ```
    - Nginx will be accessible at http://localhost:80.
-   - API Gateway (Internal) handles routing on port `1234` to each microservice.
-   - User Service manages profile data in Firestore on port `6767`.
+   - API Gateway (Internal) handles routing on port `1234`, manages **distributed session initialization** (leader election via Redis `SETNX`), and injects identity headers (`X-User-Id`, `X-User-Role`).
+   - User Service manages profile data in Firestore on port `6767` and coordinates with Firebase Auth.
    - Question Service manages question data in Firestore on port `6768`.
-   - Matching Service manages event-based user matching on port `6769`.
-   - Collaboration Service (Internal) manages real-time code editing (Yjs) and chat over Socket.IO on port `4000`.
-   - History Service (Internal) saves completed session records to Firestore on port `6770`.
-   - AI Service (Internal) provides Gemini-powered assistance on port `6771`.
-   - Redis Sessions stores session metadata and active session pointers.
+   - Matching Service manages **polling-based user matching** on port `6769` using Redis-based queuing (LPUSH/BRPOP).
+   - Collaboration Service (Internal) manages real-time code editing (Yjs) and chat over Socket.IO on port `4000`. It directly triggers history saving via the History Service.
+   - History Service (Internal) saves per-user session records (code snapshots) to Firestore on port `6770`.
+   - AI Service (Internal) provides Gemini-powered assistance on port `6771` (limited to 3 requests per session).
+   - Redis Sessions stores session metadata, active session pointers, and WebSocket tickets.
    - Redis Auth stores auth invalidation signals (deleted users, stale claims).
-   - Redis Matching manages the matching queue.
-   - Redis PubSub handles the Socket.IO multi-instance adapter.
+   - Redis Matching manages the matching queue and timeout tracking.
 
 ### 3. Running the Frontend
   The frontend is a React application built with Vite.
