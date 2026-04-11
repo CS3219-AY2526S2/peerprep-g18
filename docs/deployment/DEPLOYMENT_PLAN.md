@@ -19,9 +19,9 @@ This document provides a detailed analysis of the recommended AWS services for e
 - **Horizontal Scaling**: Lambda automatically scales out to handle peaks during user surges.
 
 ### User Service
-- **Service**: **AWS App Runner**
-- **Rationale**: While Lambda could work, the User Service handles critical authentication and profile management. Consistent low latency is preferred for a smooth login/auth experience. App Runner provides a fully managed containerized environment that scales automatically and maintains a warm state.
-- **Fallback**: Lambda is a viable low-cost alternative if traffic is extremely low.
+- **Service**: **AWS Lambda** (FastAPI with Mangum)
+- **Rationale**: Previously targeted for AWS App Runner, this service has been migrated to AWS Lambda due to the upcoming deprecation of App Runner in late April 2026. Lambda provides a cost-effective, serverless alternative that scales automatically. To mitigate cold starts for critical auth paths, provisioned concurrency can be utilized if necessary.
+- **Fallback**: Provisioned concurrency if latency requirements are not met by standard Lambda.
 
 ### History Service
 - **Service**: **AWS Lambda**
@@ -34,13 +34,13 @@ This document provides a detailed analysis of the recommended AWS services for e
 ## Backend Microservices (Stateful / Long-running)
 
 ### Matching Service
-- **Service**: **AWS ECS Fargate**
+- **Service**: **AWS ECS**
 - **Rationale**: Matching logic involves long-polling or Server-Sent Events (SSE) to maintain a connection with the user while searching for a peer. It also uses background workers for queue processing. Lambda's 15-minute execution limit and stateless nature make it unsuitable for long-lived matching sessions.
 - **Scaling**: Scales horizontally based on CPU/Memory or custom metrics like pending match count.
 
 ### Collaboration Service
-- **Service**: **AWS ECS Fargate** (Behind an ALB with WebSockets)
-- **Rationale**: Requires persistent WebSocket connections for real-time document sync (Yjs) and chat. ECS Fargate is better suited for stateful connections and provides better control over memory management for the Yjs document state.
+- **Service**: **AWS ECS** (Behind an ALB with WebSockets)
+- **Rationale**: Requires persistent WebSocket connections for real-time document sync (Yjs) and chat. ECS is better suited for stateful connections and provides better control over memory management for the Yjs document state.
 - **Networking**: Application Load Balancer (ALB) supports the necessary sticky sessions (if needed) and WebSocket protocol.
 
 ## Data & Infrastructure
@@ -54,8 +54,8 @@ This document provides a detailed analysis of the recommended AWS services for e
 - **Benefits**: Offloads session management from the services and ensures low-latency state sharing between microservices.
 
 ### API Gateway / Routing
-- **Service**: **Amazon API Gateway** + **AWS App Runner** (for the Gateway Microservice)
-- **Rationale**: Amazon API Gateway handles the public entry point, CORS, and standard routing. The internal `api-gateway` logic (auth token validation, custom routing) should run as a container on App Runner to handle request throughput efficiently.
+- **Service**: **Amazon API Gateway** + **AWS Lambda** (for the Gateway Microservice)
+- **Rationale**: Amazon API Gateway handles the public entry point, CORS, and standard routing. The internal `api-gateway` logic (auth token validation, custom routing) should run as a containerized Lambda to handle request throughput efficiently and cost-effectively following the App Runner deprecation.
 
 ---
 
@@ -65,11 +65,11 @@ This document provides a detailed analysis of the recommended AWS services for e
 |-----------|-------------|--------------|--------------|
 | Frontend | S3 + CloudFront | Automatic | Very Low |
 | Question Service | Lambda | Per-request | Zero-idle |
-| User Service | App Runner | Auto-scaling (Container) | Low-Medium |
+| User Service | Lambda | Per-request | Zero-idle |
 | History Service | Lambda | Per-request | Zero-idle |
 | AI Service | Lambda | Per-request | Zero-idle |
-| Matching Service | ECS Fargate | Auto-scaling (Task) | Medium |
-| Collaboration Service | ECS Fargate | Auto-scaling (Task) | Medium |
-| API Gateway | API GW + App Runner | Managed/Auto-scaling | Medium |
+| Matching Service | ECS | Auto-scaling (Task) | Medium |
+| Collaboration Service | ECS | Auto-scaling (Task) | Medium |
+| API Gateway | API GW + Lambda | Managed/Per-request | Low-Medium |
 | Primary Database | DynamoDB | On-demand / Provisioned | Scalable |
 | Redis Cache | ElastiCache | Node-based | Fixed-per-node |
