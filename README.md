@@ -25,16 +25,24 @@ For more information regarding the Product Backlog, refer to [our documentation 
 peerprep-g18/
   README.md
   LICENSE
+  .github/
+    workflows/
+      ci.yml  (Continuous Integration via Github Actions)
   docs/
+    deployment/
+      ...     (AWS deployment guide and plan)
     images/
       ...
+    misc/
+      ...     (Implementation details and scenarios)
     plantUML/
-      ...
+      ...     (Useful UML Diagrams for the project)
     README.md
     UML.md
     SCHEMA.md
     BACKLOG.md
     API.md
+    TESTING_GUIDE.md
 
   frontend/
     src/
@@ -43,8 +51,12 @@ peerprep-g18/
         ui/
           ...     (individual React elements used across pages)
         ...       (the individual pages)
+      contexts/   (React contexts like UserContext)
+      utils/      (utility functions like avatar.ts)
+      styles/     (global CSS)
+      firebase.ts (Firebase client config)
+      constants.ts
     README.md
-    Dockerfile    (TODO...)
 
   backend/
     docker-compose.yml
@@ -75,7 +87,10 @@ peerprep-g18/
       app/
         main.py
         worker.py
-        ...
+        routers/
+          match.py
+        schemas.py
+        database.py
       requirements.txt
       Dockerfile
     collaboration-service/
@@ -83,10 +98,16 @@ peerprep-g18/
       package.json
       Dockerfile
     history-service/
-      main.py                         (FastAPI — saves sessions to Firestore)
+      app/
+        main.py
+        database.py
+        api/
+          routes.py
+        models/
+          domain.py
       requirements.txt
       Dockerfile
-      firebase-history-account.json   (.gitignore but needed to run locally)
+      firebase-historyservice.json    (.gitignore but needed to run locally)
     ai-service/
       main.py                         (FastAPI — Gemini API wrapper)
       requirements.txt
