@@ -24,6 +24,28 @@ resource "aws_iam_role_policy_attachment" "ecs_task_secrets_read" {
   policy_arn = aws_iam_policy.secrets_read_policy.arn
 }
 
+# 1.1. Additional permissions for ECS Task Execution (Logging)
+resource "aws_iam_policy" "ecs_logging_policy" {
+  name        = "PeerPrepECSLoggingPolicy"
+  description = "Allows ECS tasks to create log groups and streams"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action   = "logs:CreateLogGroup"
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_logging_attach" {
+  role       = aws_iam_role.ecs_task_execution_role.name
+  policy_arn = aws_iam_policy.ecs_logging_policy.arn
+}
+
 # 2. IAM Role for ECS EC2 Instance (The host machine)
 resource "aws_iam_role" "ecs_instance_role" {
   name = "peerprep-ecs-instance-role"
@@ -163,6 +185,13 @@ locals {
     "matching-service"      = { port = 8001, cpu = 256, memory = 512 }
     "collaboration-service" = { port = 3001, cpu = 256, memory = 512 }
   }
+}
+
+# Explicitly create log groups to avoid race conditions and permission issues
+resource "aws_cloudwatch_log_group" "ecs_logs" {
+  for_each          = local.ecs_services
+  name              = "/ecs/peerprep-${each.key}"
+  retention_in_days = 7 # Keep logs for 7 days for dev
 }
 
 resource "aws_ecs_task_definition" "services" {

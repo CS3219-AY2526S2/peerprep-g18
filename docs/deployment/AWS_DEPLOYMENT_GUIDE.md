@@ -315,6 +315,43 @@ Run these commands in the `infrastructure/` directory to build your image regist
 2.  Verify that 7 repositories starting with `peerprep/` (e.g., `peerprep/api-gateway`) are listed.
 3.  Click on any repository and check the **Lifecycle policy** tab to ensure the "Keep last 5 images" rule is active.
 
+### Step 2.4.1: Initial Docker Image Upload
+Before deploying the compute layer (Step 2.5), each ECR repository must contain at least one image. AWS validates the image URI during the creation of Lambda functions and ECS Task Definitions; if the repository is empty, the deployment will fail.
+
+> After the `ecr.tf` is created, running `terraform apply`, you should be able to see the Containers in AWS ECR. Click on any one of it, and click on "View push command" for a more dedicated information.
+
+#### A. Authenticate Docker to ECR
+Run this command to get a login token and authenticate your Docker CLI to your registry (replace `<AWS_ACCOUNT_ID>` and `<REGION>`):
+```bash
+aws ecr get-login-password --region <REGION> | docker login --username AWS --password-stdin <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com
+```
+
+#### B. Build, Tag, and Push (Automated Script)
+To save time, we provide a bootstrap script that handles all 7 microservices in one go.
+
+**For Linux/macOS:**
+```bash
+# 1. Make the script executable
+chmod +x scripts/bootstrap_ecr.sh
+
+# 2. Run the script (replace with your Account ID)
+./scripts/bootstrap_ecr.sh <AWS_ACCOUNT_ID> ap-southeast-1
+```
+
+**For Windows (PowerShell):**
+```powershell
+# Run the script (replace with your Account ID)
+.\scripts\bootstrap_ecr.ps1 -AWS_ACCOUNT_ID <AWS_ACCOUNT_ID> -REGION ap-southeast-1
+```
+
+#### C. Manual Example (Reference)
+If you need to push a single service manually (e.g., `api-gateway`):
+1. **Build**: `docker build -t peerprep/api-gateway ./backend/api-gateway`
+2. **Tag**: `docker tag peerprep/api-gateway:latest <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/peerprep/api-gateway:latest`
+3. **Push**: `docker push <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/peerprep/api-gateway:latest`
+
+*Note: In production, this is handled by the GitHub Actions pipeline (Step 3), but the first push is often done manually to "bootstrap" the infrastructure.*
+
 ### Step 2.5: Backend Compute Deployments
 This step provisions the actual computing resources for your 7 microservices. We use a hybrid approach: **AWS Lambda** for stateless services and **AWS ECS (on EC2)** for stateful services.
 
@@ -355,10 +392,19 @@ Stateful services (Matching, Collaboration) run as long-lived containers on a ma
     *   **Placement Strategies**: As we scale to multiple hosts, we can use **Spread** strategies to ensure that instances of the same service (e.g., Collaboration) are placed on different physical machines to prevent a single hardware failure from taking down the entire service.
 *   **Centralized Logging**: Logs are streamed to CloudWatch, so you can monitor all your containers in one dashboard without ever needing to log into the EC2 instance itself.
 
+#### D. Container Registry Integration (ECR)
+All compute resources defined in this step (both Lambda and ECS) pull their runtime code from the ECR repositories created in Step 2.4. 
+* **Lambda**: Each function is configured as a `PackageType = "Image"`. AWS pulls the image from ECR and caches it for execution.
+* **ECS**: The Task Definitions specify the ECR Image URI. The EC2 host's Docker agent pulls these images from the private registry using the permissions granted by the Task Execution Role.
+* **Immutable Tags**: While we use `:latest` for initial bootstrapping, our CI/CD pipeline (Step 3) uses unique commit SHAs to ensure deployments are traceable and rollbacks are reliable.
+
 #### E. Execution
 1.  **`terraform plan`**: Review the creation of IAM roles, the ALB, 5 Lambda functions, and the ECS cluster.
 2.  **`terraform apply`**: Provision the compute layer.
-    - *Note*: You must have pushed at least one image to each ECR repository before this will succeed (see Step 4).
+    - **CRITICAL ECR DEPENDENCY**: This step will **FAIL** if any of the 7 ECR repositories created in Step 2.4 are empty.
+    - **Why?**: AWS Lambda and ECS require a valid image manifest to exist at the specified URI during resource creation. Terraform cannot "placeholder" these images.
+    - **Solution**: Ensure you have completed **Step 2.4.1** (Initial Docker Image Upload) for all 7 services before running this command.
+
 
 ### Step 2.6: Frontend (S3 + CloudFront)
 *   **S3 Bucket:** Hosts the compiled React build (`dist/`). Configured to block all public access.
@@ -423,7 +469,7 @@ terraform apply -target=module.vpc -target=aws_ecr_repository.service_repos
 ```
 
 ### Phase 2: Initial Image Push
-1.  Build and push your Docker images manually (or via a temporary GitHub Action) to the 7 new ECR repositories. 
+1.  Build and push your Docker images manually (or via a temporary GitHub Action) to the 7 new ECR repositories. (See **Step 2.4.1** for the automated script in `docs/deployment/scripts/`).
 2.  Ensure each repository has at least one image tagged `:latest`.
 
 ### Phase 3: Full Infrastructure
