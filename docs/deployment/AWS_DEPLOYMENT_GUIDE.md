@@ -316,20 +316,49 @@ Run these commands in the `infrastructure/` directory to build your image regist
 3.  Click on any repository and check the **Lifecycle policy** tab to ensure the "Keep last 5 images" rule is active.
 
 ### Step 2.5: Backend Compute Deployments
+This step provisions the actual computing resources for your 7 microservices. We use a hybrid approach: **AWS Lambda** for stateless services and **AWS ECS (on EC2)** for stateful services.
 
-#### A. AWS Lambda (Container Images - Serverless)
-**Services:** API Gateway, User, Question, History, AI
-*   **Rationale:** Following the deprecation of AWS App Runner (slated for late April 2026), all stateless microservices have been migrated to AWS Lambda for better cost-efficiency and simplified management.
-*   **Packaging:** Packaged as Docker containers and pushed to ECR.
-*   **Terraform Config:** Defines Lambda functions referencing the ECR images. Attached to the Private Subnets so they can securely access Redis (if needed).
-*   **Networking:** An API Gateway (HTTP API type) is provisioned to trigger the Lambdas, providing default AWS URLs (e.g., `https://xyz.execute-api.ap-southeast-1.amazonaws.com`).
+#### A. Application Load Balancer (`infrastructure/alb.tf`)
+The ALB is our primary entry point for stateful traffic and sits in the **Public Subnets**.
+*   **Path-Based Routing**: To minimize costs, we use a single ALB and route traffic based on URL paths (e.g., `/matching/*` and `/collaboration/*`) to different **Target Groups**.
+*   **WebSocket Support**: We've ensured the listener supports long-lived TCP connections, which are critical for real-time synchronization in the Collaboration service.
 
-#### B. AWS ECS (EC2 Launch Type)
-**Services:** Matching Service, Collaboration Service
-*   **Rationale:** Matching and Collaboration require persistent connections (SSE and WebSockets) and long-lived state that are not suitable for Lambda's execution limits.
-*   **Packaging:** Runs as long-lived containers in ECS clusters (EC2 Launch Type) pulling from ECR.
-*   **Networking:** Deployed strictly in Private Subnets. Exposed to the internet via an **Application Load Balancer (ALB)** sitting in the Public Subnets.
-*   **ALB Config:** Configured to support WebSockets (ws/wss) required by the Collaboration service (Yjs/Socket.io), providing an AWS-generated URL (e.g., `peerprep-alb-123.ap-southeast-1.elb.amazonaws.com`).
+#### B. Lambda Services (`infrastructure/lambda.tf`)
+Stateless services (User, Question, History, AI, and API Gateway) are deployed as Lambdas for maximum cost-efficiency, while ensuring future scalability by leveraging Lambda's native ability to scale to thousands of concurrent executions in seconds without manual server management.
+*   **Elastic Scaling**: For every simultaneous request, Lambda automatically provisions a new "execution environment" (effectively a container). This means the system "increases containers" and load balances them for us on-the-fly.
+*   **Concurrency Management**: In the highly unlikely event that traffic exceeds the default AWS regional concurrency limits, we can request a quota increase or implement **Provisioned Concurrency** to ensure immediate availability.
+*   **Architectural Escape Hatch**: Because we have containerized these services using Docker, we retain the flexibility to move them to ECS (where we can manually scale container counts behind a load balancer) if our requirements ever exceed the Lambda execution model.
+*   **Compartmentalized IAM**: Each service uses a dedicated execution role defined in this file, ensuring that permissions (like reading secrets) are isolated to only the services that need them.
+*   **VPC Networking**: Lambdas are attached to **Private Subnets**, allowing them to talk to our internal Redis cache securely without exposing any endpoints to the public internet.
+*   **Graviton (ARM64)**: We target the `arm64` architecture for Lambda to take advantage of Graviton2 processors, which offer better price-performance than standard x86 chips for our Python and Node.js runtimes.
+*   **API Gateway Integration**: We use an AWS HTTP API to route traffic to our Lambdas. Here is the core configuration:
+    ```hcl
+    resource "aws_apigatewayv2_api" "http_api" {
+      name          = "peerprep-api"
+      protocol_type = "HTTP"
+      cors_configuration {
+        allow_origins = ["*"] # Adjust this later for security
+        allow_methods = ["*"]
+        allow_headers = ["*"]
+      }
+    }
+    ```
+    > **Note on CORS Security**: We are currently allowing all origins (`*`) to prevent blocking the frontend during initial setup. Since the CloudFront URL (the "Frontend address") is generated later in the process, we use this permissive setting to ensure connectivity. We will restrict this to the specific CloudFront domain once it is provisioned.
+
+#### C. ECS on EC2 (`infrastructure/ecs.tf`)
+Stateful services (Matching, Collaboration) run as long-lived containers on a managed EC2 host.
+*   **Cost Policy (Bin-Packing)**: Instead of using Fargate (which charges per-container), we use a single **t4g.small** EC2 instance. This allows us to run multiple containers on one "slice" of hardware, which is significantly cheaper for development.
+*   **Task Isolation**: Even though they share a host, each service has its own **ECS Task Definition** and **Task Execution Role**, ensuring they remain logically separated.
+*   **Future Scaling Strategy**:
+    *   **Service Auto Scaling (Tasks)**: We can configure ECS to automatically increase the `desired_count` of our containers based on CPU/Memory usage or custom metrics (e.g., the length of the Matching queue).
+    *   **Cluster Auto Scaling (Capacity Providers)**: Our current setup uses an ECS Capacity Provider linked to an Auto Scaling Group. If we increase our task count and the current EC2 instance runs out of CPU/RAM, AWS will automatically provision a second `t4g.small` instance to join the cluster.
+    *   **Placement Strategies**: As we scale to multiple hosts, we can use **Spread** strategies to ensure that instances of the same service (e.g., Collaboration) are placed on different physical machines to prevent a single hardware failure from taking down the entire service.
+*   **Centralized Logging**: Logs are streamed to CloudWatch, so you can monitor all your containers in one dashboard without ever needing to log into the EC2 instance itself.
+
+#### E. Execution
+1.  **`terraform plan`**: Review the creation of IAM roles, the ALB, 5 Lambda functions, and the ECS cluster.
+2.  **`terraform apply`**: Provision the compute layer.
+    - *Note*: You must have pushed at least one image to each ECR repository before this will succeed (see Step 4).
 
 ### Step 2.6: Frontend (S3 + CloudFront)
 *   **S3 Bucket:** Hosts the compiled React build (`dist/`). Configured to block all public access.
@@ -385,16 +414,25 @@ To keep deployments fast and isolated, create a separate workflow file for each 
 
 ## 4. Bootstrapping Strategy (The "Chicken and Egg" Problem)
 
-When setting this up for the very first time, Terraform cannot deploy Lambda or ECS if the ECR repositories are empty. Follow this execution order:
+Terraform cannot deploy Lambda or ECS if the ECR repositories are empty because the "image" parameter is mandatory.
 
-1.  **Upload Secrets:** Manually create the Secrets Manager entries for Firebase via the AWS Console.
-2.  **Phase 1 Terraform:** Write and run Terraform code to *only* deploy the VPC, Subnets, Security Groups, and empty ECR Repositories.
-    ```bash
-    terraform apply -target=module.vpc -target=aws_ecr_repository.services
-    ```
-3.  **Phase 1 CI/CD:** Run your GitHub Actions manually (or push code) to build your Docker images and push them into the newly created ECR repositories.
-4.  **Phase 2 Terraform:** Now that images exist, run a full `terraform apply` to deploy Lambda, ECS, ElastiCache, S3, and CloudFront.
-5.  **Environment Variables Loop:**
-    *   Retrieve the generated AWS URLs (CloudFront, ALB, API Gateway HTTP APIs).
-    *   Add these URLs as GitHub Repository Secrets so the Frontend and API Gateway CI/CD pipelines can build the `.env` files.
-    *   Trigger the CI/CD pipelines one final time so the services become aware of each other's AWS URLs.
+### Phase 1: Registry & Networking
+Run Terraform code to deploy ONLY the VPC and ECR repositories.
+```bash
+terraform apply -target=module.vpc -target=aws_ecr_repository.service_repos
+```
+
+### Phase 2: Initial Image Push
+1.  Build and push your Docker images manually (or via a temporary GitHub Action) to the 7 new ECR repositories. 
+2.  Ensure each repository has at least one image tagged `:latest`.
+
+### Phase 3: Full Infrastructure
+Now that images exist, run a full `terraform apply` to deploy Lambda, ECS, ALB, and CloudFront.
+```bash
+terraform apply
+```
+
+### Phase 4: Environment Variables Loop
+1.  Retrieve the generated AWS URLs (CloudFront, ALB, API Gateway).
+2.  Add these as GitHub Secrets so the CI/CD pipelines can build the `.env` files.
+3.  Trigger the pipelines one last time so services are aware of each other.

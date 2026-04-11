@@ -1,0 +1,132 @@
+# 1. IAM Role for Lambda Execution
+resource "aws_iam_role" "lambda_exec_role" {
+  name = "peerprep-lambda-exec-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
+
+# Attach basic Lambda VPC execution policy (for logging and networking)
+resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+# Attach our custom Secrets Manager read policy
+resource "aws_iam_role_policy_attachment" "lambda_secrets_read" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = aws_iam_policy.secrets_read_policy.arn
+}
+
+# 2. Security Group for Lambdas
+resource "aws_security_group" "lambda_sg" {
+  name        = "peerprep-lambda-sg"
+  description = "Allow Lambdas to reach Redis and Outbound"
+  vpc_id      = module.vpc.vpc_id
+
+  # No inbound traffic (Lambdas are triggered by API GW)
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# 3. API Gateway (HTTP API Type)
+resource "aws_apigatewayv2_api" "http_api" {
+  name          = "peerprep-api"
+  protocol_type = "HTTP"
+  cors_configuration {
+    allow_origins = ["*"] # Adjust this later for security
+    allow_methods = ["*"]
+    allow_headers = ["*"]
+  }
+}
+
+resource "aws_apigatewayv2_stage" "default" {
+  api_id      = aws_apigatewayv2_api.http_api.id
+  name        = "$default"
+  auto_deploy = true
+}
+
+# 4. Helper for Lambda Integration & Permissions
+# We use a loop for similar stateless microservices
+locals {
+  lambda_services = {
+    "api-gateway"      = { port = 8000 }
+    "user-service"     = { port = 8002 }
+    "question-service" = { port = 8003 }
+    "history-service"  = { port = 8004 }
+    "ai-service"       = { port = 8005 }
+  }
+}
+
+# Placeholder image for bootstrapping (as per Step 4)
+# In Phase 2, this will point to the real ECR images
+resource "aws_lambda_function" "services" {
+  for_each      = local.lambda_services
+  function_name = "peerprep-${each.key}"
+  role          = aws_iam_role.lambda_exec_role.arn
+  package_type  = "Image"
+  image_uri     = "${aws_ecr_repository.service_repos[each.key].repository_url}:latest"
+  timeout       = 30
+  memory_size   = 512
+
+  vpc_config {
+    subnet_ids         = module.vpc.private_subnets
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+
+  environment {
+    variables = {
+      REDIS_HOST = aws_elasticache_cluster.redis.cache_nodes[0].address
+      REDIS_PORT = "6379"
+      # Other secrets are pulled from Secrets Manager inside the app logic
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [image_uri] # Let CI/CD manage the image updates
+  }
+}
+
+# API Gateway Integration for each service
+resource "aws_apigatewayv2_integration" "lambda_integration" {
+  for_each           = local.lambda_services
+  api_id             = aws_apigatewayv2_api.http_api.id
+  integration_type   = "AWS_PROXY"
+  integration_method = "POST"
+  integration_uri    = aws_lambda_function.services[each.key].invoke_arn
+}
+
+# Route each service path (e.g., /user/*) to its Lambda
+resource "aws_apigatewayv2_route" "routes" {
+  for_each  = local.lambda_services
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "ANY /${each.key}/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration[each.key].id}"
+}
+
+# Allow API Gateway to invoke Lambda
+resource "aws_lambda_permission" "api_gw" {
+  for_each      = local.lambda_services
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.services[each.key].function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+# 5. Output API Gateway URL
+output "api_gateway_url" {
+  value = aws_apigatewayv2_api.http_api.api_endpoint
+}
