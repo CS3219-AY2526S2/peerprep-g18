@@ -49,13 +49,22 @@ This document provides a detailed analysis of the recommended AWS services for e
 - **Service**: **Firestore** for multi-cloud
 
 ### Cache & Session State (Redis)
-- **Service**: **Amazon ElastiCache for Redis OSS**
-- **Rationale**: Provides a high-performance, fully managed Redis cluster for ephemeral state (matching queues, session tickets, chat history).
-- **Benefits**: Offloads session management from the services and ensures low-latency state sharing between microservices.
+- **Service**: **Amazon ElastiCache for Redis OSS** (Single Node: `cache.t4g.micro`)
+- **Rationale**: A high-performance, fully managed Redis node acts as a **shared memory layer** for the API Gateway (token invalidation), Matching Service (queues), and Collaboration Service (ticket-based auth).
+- **Cost Optimization**: We consolidate multiple logical Redis instances into a **single-node cluster** to minimize fixed hourly costs.
+- **Benefits**: 
+  - **Shared Hub**: Offloads session management and ephemeral state from individual services.
+  - **Scalability**: While starting with a single node, ElastiCache allows for easy scaling (to larger instances or multi-node) as traffic grows.
+  - **Security**: Placed strictly in **Private Subnets**, accessible only by our microservices via port 6379.
 
 ### API Gateway / Routing
 - **Service**: **Amazon API Gateway** + **AWS Lambda** (for the Gateway Microservice)
 - **Rationale**: Amazon API Gateway handles the public entry point, CORS, and standard routing. The internal `api-gateway` logic (auth token validation, custom routing) should run as a containerized Lambda to handle request throughput efficiently and cost-effectively following the App Runner deprecation.
+
+### Secrets Management
+- **Service**: **AWS Secrets Manager**
+- **Rationale**: Securely stores sensitive credentials like Firebase Service Account JSONs and SMTP passwords.
+- **Isolation Strategy**: We use three separate secret containers for our distinct Firebase projects (Main/Auth, History, and Question) to maintain strict microservice isolation and prevent cross-project credential leakage.
 
 ---
 
@@ -71,5 +80,9 @@ This document provides a detailed analysis of the recommended AWS services for e
 | Matching Service | ECS | Auto-scaling (Task) | Medium |
 | Collaboration Service | ECS | Auto-scaling (Task) | Medium |
 | API Gateway | API GW + Lambda | Managed/Per-request | Low-Medium |
-| Primary Database | DynamoDB | On-demand / Provisioned | Scalable |
-| Redis Cache | ElastiCache | Node-based | Fixed-per-node |
+| Networking | NAT Gateway (x1) | Managed | High |
+| Secrets Manager | AWS Secrets Manager | N/A | Low |
+| Primary Database | Firestore | Multi-cloud | Scalable |
+| Redis Cache | ElastiCache | Node-based | Medium |
+
+*For a detailed breakdown of costs in USD, refer to [ESTIMATED_PRICING.md](./ESTIMATED_PRICING.md).*
