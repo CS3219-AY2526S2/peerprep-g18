@@ -14,7 +14,7 @@ Before diving into the code, here is a brief explanation of the networking compo
 *   **Subnets:** Sub-sections of the VPC. We divide our VPC into two types for security and high availability (spanning two Availability Zones):
     *   **Public Subnets:** These have direct access to the internet. We place our Application Load Balancer (ALB) and NAT Gateways here.
     *   **Private Subnets:** These have no direct internet access. Services placed here can reach the internet *outward* (e.g., to talk to Firebase) via the NAT Gateway, but the internet cannot reach them directly. This is where we place our ECS tasks, Lambda functions, and the Redis cache.
-*   **Security Groups (SGs):** Virtual firewalls attached to your resources. We configure these so that, for example, your Redis cluster *only* accepts traffic coming from the specific Security Groups assigned to your App Runner and ECS Fargate services.
+*   **Security Groups (SGs):** Virtual firewalls attached to your resources. We configure these so that, for example, your Redis cluster *only* accepts traffic coming from the specific Security Groups assigned to your Lambda and ECS services.
 *   **AWS Secrets Manager:** Securely stores your Firebase Service Account JSON files and environment variables. Services pull these securely at runtime instead of hardcoding them.
 
 ---
@@ -31,11 +31,11 @@ We will organize our infrastructure configuration in an `infrastructure/` folder
 Using the official `terraform-aws-modules/vpc/aws` module, we define a VPC with 2 Public Subnets and 2 Private Subnets. We enable a NAT Gateway so the Private Subnets can talk to Firestore.
 
 ### Step 2.2: Secrets Management
-We define secrets in AWS Secrets Manager via Terraform (e.g., `peerprep/firebase-service-account`). Terraform also provisions **IAM Execution Roles** for Lambda, ECS, and App Runner, specifically granting them `secretsmanager:GetSecretValue` permissions so they can inject credentials at startup.
+We define secrets in AWS Secrets Manager via Terraform (e.g., `peerprep/firebase-service-account`). Terraform also provisions **IAM Execution Roles** for Lambda and ECS, specifically granting them `secretsmanager:GetSecretValue` permissions so they can inject credentials at startup.
 
 ### Step 2.3: ElastiCache (Redis)
 *   **Placement:** Deployed inside the **Private Subnets**.
-*   **Security Group Rules:** Only allows Inbound TCP on port `6379` from the specific Security Groups tied to ECS Fargate (Matching/Collaboration) and App Runner (Gateway/User).
+*   **Security Group Rules:** Only allows Inbound TCP on port `6379` from the specific Security Groups tied to ECS (Matching/Collaboration) and Lambda (Gateway/User/Question/etc).
 
 ### Step 2.4: Elastic Container Registry (ECR)
 Terraform will provision private ECR repositories to store Docker images for every single service:
@@ -44,19 +44,15 @@ Terraform will provision private ECR repositories to store Docker images for eve
 ### Step 2.5: Serverless Compute Deployments
 
 #### A. AWS Lambda (Container Images)
-**Services:** Question, History, AI
+**Services:** API Gateway, User, Question, History, AI
+*   **Rationale:** Following the deprecation of AWS App Runner (slated for late April 2026), all stateless microservices have been migrated to AWS Lambda for better cost-efficiency and simplified management.
 *   **Packaging:** Packaged as Docker containers and pushed to ECR.
 *   **Terraform Config:** Defines Lambda functions referencing the ECR images. Attached to the Private Subnets so they can securely access Redis (if needed).
 *   **Networking:** An API Gateway (HTTP API type) is provisioned to trigger the Lambdas, providing default AWS URLs (e.g., `https://xyz.execute-api.ap-southeast-1.amazonaws.com`).
 
-#### B. AWS App Runner
-**Services:** User Service, API Gateway
-*   **Packaging:** App Runner pulls container images directly from ECR.
-*   **Terraform Config:** Defines App Runner services connected to our VPC (via a VPC Connector) to allow internal routing to Redis.
-*   **Networking:** App Runner automatically provisions a public AWS URL with built-in SSL (e.g., `https://random-id.ap-southeast-1.awsapprunner.com`).
-
-#### C. AWS ECS Fargate
+#### B. AWS ECS
 **Services:** Matching Service, Collaboration Service
+*   **Rationale:** Matching and Collaboration require persistent connections (SSE and WebSockets) and long-lived state that are not suitable for Lambda's execution limits.
 *   **Packaging:** Runs as long-lived containers in ECS clusters pulling from ECR.
 *   **Networking:** Deployed strictly in Private Subnets. Exposed to the internet via an **Application Load Balancer (ALB)** sitting in the Public Subnets.
 *   **ALB Config:** Configured to support WebSockets (ws/wss) required by the Collaboration service (Yjs/Socket.io), providing an AWS-generated URL (e.g., `peerprep-alb-123.ap-southeast-1.elb.amazonaws.com`).
@@ -90,7 +86,7 @@ To keep deployments fast and isolated, create a separate workflow file for each 
     *   Deploy: Run an AWS CLI command to force the Lambda function to use the newly pushed image:
         `aws lambda update-function-code --function-name question-service --image-uri <ECR_URI>:<TAG>`
 
-#### Example 2: ECS Fargate Pipeline (`collaboration-service.yml`)
+#### Example 2: ECS Pipeline (`collaboration-service.yml`)
 1.  **Trigger:** On push to `main` with changes in `backend/collaboration-service/**`.
 2.  **Steps:**
     *   Checkout code & Configure AWS credentials.
@@ -115,7 +111,7 @@ To keep deployments fast and isolated, create a separate workflow file for each 
 
 ## 4. Bootstrapping Strategy (The "Chicken and Egg" Problem)
 
-When setting this up for the very first time, Terraform cannot deploy App Runner, Lambda, or ECS if the ECR repositories are empty. Follow this execution order:
+When setting this up for the very first time, Terraform cannot deploy Lambda or ECS if the ECR repositories are empty. Follow this execution order:
 
 1.  **Upload Secrets:** Manually create the Secrets Manager entries for Firebase via the AWS Console.
 2.  **Phase 1 Terraform:** Write and run Terraform code to *only* deploy the VPC, Subnets, Security Groups, and empty ECR Repositories.
@@ -123,8 +119,8 @@ When setting this up for the very first time, Terraform cannot deploy App Runner
     terraform apply -target=module.vpc -target=aws_ecr_repository.services
     ```
 3.  **Phase 1 CI/CD:** Run your GitHub Actions manually (or push code) to build your Docker images and push them into the newly created ECR repositories.
-4.  **Phase 2 Terraform:** Now that images exist, run a full `terraform apply` to deploy Lambda, App Runner, ECS, ElastiCache, S3, and CloudFront.
+4.  **Phase 2 Terraform:** Now that images exist, run a full `terraform apply` to deploy Lambda, ECS, ElastiCache, S3, and CloudFront.
 5.  **Environment Variables Loop:**
-    *   Retrieve the generated AWS URLs (CloudFront, App Runner, ALB, API Gateway HTTP APIs).
+    *   Retrieve the generated AWS URLs (CloudFront, ALB, API Gateway HTTP APIs).
     *   Add these URLs as GitHub Repository Secrets so the Frontend and API Gateway CI/CD pipelines can build the `.env` files.
     *   Trigger the CI/CD pipelines one final time so the services become aware of each other's AWS URLs.

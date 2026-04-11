@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, X, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -17,6 +17,30 @@ export function MatchingPage() {
   const hasRequestedRef = useRef(false);
   const isTransitioningRef = useRef(false);
 
+  // Manual cancellation
+  const handleCancelClick = useCallback(async () => {
+    // Stop polling
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+    
+    // Tell backend to delete the ticket
+    try {
+      const firebaseUser = auth.currentUser;
+      if (firebaseUser) {
+          const token = await firebaseUser.getIdToken();
+          await fetch(`${GATEWAY_URL}/matching/cancel-pair`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+      }
+    } catch (err) {
+      console.error("Failed to cancel on backend", err);
+    }
+
+    navigate('/dashboard', { replace: true });
+  }, [navigate]);
+
   useEffect(() => {
     if (!criteria) {
       navigate('/dashboard', { replace: true });
@@ -25,51 +49,6 @@ export function MatchingPage() {
 
     if (hasRequestedRef.current) return;
     hasRequestedRef.current = true;
-
-    const startMatchmaking = async () => {
-      try {
-        const firebaseUser = auth.currentUser;
-        if (!firebaseUser) throw new Error("Not authenticated");
-        const token = await firebaseUser.getIdToken();
-
-        // Join Queue
-        const response = await fetch(`${GATEWAY_URL}/matching/find-pair`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            topic_options: criteria.topics,
-            difficulty_options: criteria.difficulties
-          })
-        });
-
-        if (response.status === 202) {
-          const data = await response.json();
-          startPolling(data.ticket_id, token);
-        } else if (response.status === 400) {
-          toast.error("You are already in the queue!");
-          handleCancelClick();
-        } else if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          if (response.status === 401 && errData.detail === 'ACCOUNT_DELETED') {
-            window.dispatchEvent(new Event('auth:account_deleted'));
-            return;
-          }
-          if (response.status === 403 && errData.detail === 'TOKEN_STALE') {
-            window.dispatchEvent(new Event('auth:token_stale'));
-            navigate('/admin', { replace: true });
-            return;
-          }
-          throw new Error(errData.detail || `Matching failed: ${response.status}`);
-        }
-      } catch (err) {
-        console.error("Matchmaking error:", err);
-        toast.error("Failed to start matchmaking.");
-        handleCancelClick();
-      }
-    };
 
     const startPolling = (ticketId: string, token: string) => {
       // Poll the Status Endpoint every 1 second
@@ -136,6 +115,51 @@ export function MatchingPage() {
       }, 1000); // 1 second polling
     };
 
+    const startMatchmaking = async () => {
+      try {
+        const firebaseUser = auth.currentUser;
+        if (!firebaseUser) throw new Error("Not authenticated");
+        const token = await firebaseUser.getIdToken();
+
+        // Join Queue
+        const response = await fetch(`${GATEWAY_URL}/matching/find-pair`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            topic_options: criteria.topics,
+            difficulty_options: criteria.difficulties
+          })
+        });
+
+        if (response.status === 202) {
+          const data = await response.json();
+          startPolling(data.ticket_id, token);
+        } else if (response.status === 400) {
+          toast.error("You are already in the queue!");
+          handleCancelClick();
+        } else if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          if (response.status === 401 && errData.detail === 'ACCOUNT_DELETED') {
+            window.dispatchEvent(new Event('auth:account_deleted'));
+            return;
+          }
+          if (response.status === 403 && errData.detail === 'TOKEN_STALE') {
+            window.dispatchEvent(new Event('auth:token_stale'));
+            navigate('/admin', { replace: true });
+            return;
+          }
+          throw new Error(errData.detail || `Matching failed: ${response.status}`);
+        }
+      } catch (err) {
+        console.error("Matchmaking error:", err);
+        toast.error("Failed to start matchmaking.");
+        handleCancelClick();
+      }
+    };
+
     startMatchmaking();
 
     // Cleanup function when component unmounts
@@ -144,31 +168,7 @@ export function MatchingPage() {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [criteria, navigate]);
-
-  // Manual cancellation
-  const handleCancelClick = async () => {
-    // Stop polling
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-    
-    // Tell backend to delete the ticket
-    try {
-      const firebaseUser = auth.currentUser;
-      if (firebaseUser) {
-          const token = await firebaseUser.getIdToken();
-          await fetch(`${GATEWAY_URL}/matching/cancel-pair`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-      }
-    } catch (err) {
-      console.error("Failed to cancel on backend", err);
-    }
-
-    navigate('/dashboard', { replace: true });
-  };
+  }, [criteria, navigate, handleCancelClick]);
   
   // --- Visual Timers ---
   useEffect(() => {

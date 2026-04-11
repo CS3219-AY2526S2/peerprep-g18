@@ -6,12 +6,24 @@ import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 import { dracula } from '@uiw/codemirror-theme-dracula';
 
+interface Question {
+  question_id: string | number;
+  title: string;
+  topic: string;
+  difficulty: string;
+  statement?: string;
+  examples?: string[];
+  constraints?: string[];
+  hints?: string[];
+  template?: string;
+}
+
 interface QuestionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: (updatedData?: any) => void;
+  onSuccess: (updatedData?: Question) => void;
   mode: 'add' | 'edit';
-  initialData?: any;
+  initialData?: Question;
   topics: string[];
 }
 
@@ -34,10 +46,19 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
  
   useEffect(() => {
     if (isOpen) {
-        const dataToLoad = (mode === 'edit' && initialData) ? initialData : {
-        title: '', topic: topics[0] || 'Arrays', difficulty: 'Easy',
-        statement: '', template: '', examples: [''],
-        constraints: [''], hints: ['']
+        const dataToLoad = (mode === 'edit' && initialData) ? {
+          title: initialData.title || '',
+          topic: initialData.topic || topics[0] || 'Arrays',
+          difficulty: initialData.difficulty || 'Easy',
+          statement: initialData.statement || '',
+          template: initialData.template || '',
+          examples: initialData.examples || [''],
+          constraints: initialData.constraints || [''],
+          hints: initialData.hints || ['']
+        } : {
+          title: '', topic: topics[0] || 'Arrays', difficulty: 'Easy',
+          statement: '', template: '', examples: [''],
+          constraints: [''], hints: ['']
         };
         setFormData(dataToLoad);
         setInitialRef(JSON.stringify(dataToLoad));
@@ -87,7 +108,7 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
             const token = localStorage.getItem('peerprep_token');
             const url = mode === 'add'
                 ? `${GATEWAY_URL}/question/`
-                : `${GATEWAY_URL}/question/${initialData.question_id}`;
+                : `${GATEWAY_URL}/question/${initialData?.question_id}`;
 
             const response = await fetch(url, {
                 method: mode === 'add' ? 'POST' : 'PUT',
@@ -103,8 +124,12 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
             const savedData = await response.json();
             onSuccess(savedData);
             onClose();
-        } catch (err: any) {
-            alert(err.message);
+        } catch (err: unknown) {
+            if (err instanceof Error) {
+              alert(err.message);
+            } else {
+              alert(`An unknown error occurred while ${mode}ing question`);
+            }
         } finally {
             setIsSubmitting(false);
         }
@@ -133,7 +158,7 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
         </button>
         
         <h2 className="text-white font-bold text-3xl mb-8 flex items-center gap-3">
-          {mode === 'add' ? 'Add New Question' : `Edit Question #${initialData.question_id}`}
+          {mode === 'add' ? 'Add New Question' : `Edit Question #${initialData?.question_id || '...'}`}
         </h2>
         
         <form onSubmit={handleSubmit} className="space-y-8">

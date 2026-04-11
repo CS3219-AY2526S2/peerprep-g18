@@ -24,8 +24,8 @@ export function ProfilePage() {
   }, [isAdmin, navigate]);
 
   const [profileData, setProfileData] = useState({
-    username: user.Username || user.username,
-    email: user.Email || user.email
+    username: user?.username || '',
+    email: user?.email || ''
   });
 
   const [passwordData, setPasswordData] = useState({
@@ -35,14 +35,14 @@ export function ProfilePage() {
   });
 
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
-  const [errors, setErrors] = useState<any>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [successMessage, setSuccessMessage] = useState('');
 
   const handleAvatarConfirm = async (avatarId: number) => {
     const firebaseUser = auth.currentUser;
-    if (!firebaseUser) return;
+    if (!firebaseUser || !user) return;
     const token = await firebaseUser.getIdToken();
-    const res = await fetch(`${GATEWAY_URL}/users/${user.uid || user.UserID}/avatar`, {
+    const res = await fetch(`${GATEWAY_URL}/users/${user.uid}/avatar`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ avatar_id: avatarId })
@@ -66,9 +66,9 @@ export function ProfilePage() {
 
     try {
       const firebaseUser = auth.currentUser;
-      if (!firebaseUser) { navigate('/', { replace: true }); return; }
+      if (!firebaseUser || !user) { navigate('/', { replace: true }); return; }
       const token = await firebaseUser.getIdToken();
-      const response = await fetch(`${GATEWAY_URL}/users/${user.UserID || user.uid}`, {
+      const response = await fetch(`${GATEWAY_URL}/users/${user.uid}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -94,8 +94,12 @@ export function ProfilePage() {
       setIsEditing(false);
       setSuccessMessage('Profile updated successfully!');
       setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err: any) {
-      setErrors({ username: err.message });
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrors({ username: err.message });
+      } else {
+        setErrors({ username: 'An unknown error occurred while updating profile' });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -113,9 +117,9 @@ export function ProfilePage() {
 
     try {
       const firebaseUser = auth.currentUser;
-      if (!firebaseUser) { navigate('/', { replace: true }); return; }
+      if (!firebaseUser || !user) { navigate('/', { replace: true }); return; }
       const token = await firebaseUser.getIdToken();
-      const response = await fetch(`${GATEWAY_URL}/users/${user.UserID || user.uid}`, {
+      const response = await fetch(`${GATEWAY_URL}/users/${user.uid}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -144,8 +148,12 @@ export function ProfilePage() {
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setSuccessMessage('Password changed successfully!');
       setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err: any) {
-      setErrors({ currentPassword: err.message });
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrors({ currentPassword: err.message });
+      } else {
+        setErrors({ currentPassword: 'An unknown error occurred while changing password' });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -161,9 +169,9 @@ export function ProfilePage() {
     setIsLoading(true);
     try {
       const firebaseUser = auth.currentUser;
-      if (!firebaseUser) { navigate('/', { replace: true }); return; }
+      if (!firebaseUser || !user) { navigate('/', { replace: true }); return; }
       const token = await firebaseUser.getIdToken();
-      const response = await fetch(`${GATEWAY_URL}/users/${user.uid || user.UserID}`, {
+      const response = await fetch(`${GATEWAY_URL}/users/${user.uid}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -183,8 +191,12 @@ export function ProfilePage() {
 
       await handleLogout();
       navigate('/', { replace: true });
-    } catch (err: any) {
-      setErrors({ delete: err.message });
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrors({ delete: err.message });
+      } else {
+        setErrors({ delete: 'An unknown error occurred while deleting account' });
+      }
       setIsLoading(false);
     }
   };
@@ -193,6 +205,8 @@ export function ProfilePage() {
     await handleLogout();
     navigate('/', { replace: true });
   };
+
+  if (!user) return null;
 
   return (
     <div className="min-h-screen p-6 bg-[#2D2942]">

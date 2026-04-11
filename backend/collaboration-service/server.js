@@ -705,24 +705,28 @@ app.post('/collab/end-session/:sessionId', async (req, res) => {
   res.json({ detail: 'Active session cleared' });
 });
 
-Promise.all([
-  redisClient.connect().then(() => console.log('Connected to redis-sessions')),
-  pubClient.connect(),
-  subClient.connect(),
-]).then(() => {
-  io.adapter(createAdapter(pubClient, subClient));
-  console.log('Socket.IO Redis adapter attached');
+if (require.main === module) {
+  Promise.all([
+    redisClient.connect().then(() => console.log('Connected to redis-sessions')),
+    pubClient.connect(),
+    subClient.connect(),
+  ]).then(() => {
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log('Socket.IO Redis adapter attached');
 
-  const PORT = process.env.PORT || 4000;
-  server.listen(PORT, () => {
-    console.log(`Collaboration Service running on port ${PORT}`);
-  });
+    const PORT = process.env.PORT || 4000;
+    server.listen(PORT, () => {
+      console.log(`Collaboration Service running on port ${PORT}`);
+    });
 
-  process.on('SIGTERM', () => {
-    console.log('SIGTERM received, closing connections...');
-    io.close(() => {
-      console.log('All Socket.IO connections closed');
-      process.exit(0);
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received, closing connections...');
+      io.close(() => {
+        console.log('All Socket.IO connections closed');
+        process.exit(0);
+      });
     });
   });
-});
+}
+
+module.exports = { app, server, io, redisClient, pubClient, subClient };
