@@ -12,10 +12,11 @@ with patch('firebase_admin.credentials.Certificate'), \
      patch('firebase_admin.initialize_app'), \
      patch('firebase_admin.firestore.client', return_value=mock_db), \
      patch('httpx.AsyncClient', return_value=mock_http_client):
-    import app.main
+    # Import app from the main module in the current directory (backend/history-service/app)
     from app.main import app
 
 # Inject mock client for history-service lazy initialization
+# This needs to match the import in app/api/routes.py
 import app.api.routes
 app.api.routes.http_client = mock_http_client
 
