@@ -208,7 +208,7 @@ export function CollaborationPage() {
         const ticket = await fetchTicket(sessionId);
         if (cleaned) return;
 
-        editorSocket = io('http://localhost/editor', {
+        editorSocket = io(`${ALB_URL}/editor`, {
           path: '/socket.io',
           query: { ticket },
           transports: ['websocket'],

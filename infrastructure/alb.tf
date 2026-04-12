@@ -76,7 +76,7 @@ resource "aws_lb_listener" "http" {
     type = "fixed-response"
     fixed_response {
       content_type = "text/plain"
-      message_body = "PeerPrep ALB - Use /matching or /collaboration paths"
+      message_body = "PeerPrep ALB - Use /matching or /collab paths"
       status_code  = "200"
     }
   }
@@ -111,7 +111,7 @@ resource "aws_lb_listener_rule" "collaboration_rule" {
 
   condition {
     path_pattern {
-      values = ["/collaboration/*", "/socket.io/*"]
+      values = ["/collab/*", "/socket.io/*"]
     }
   }
 }
