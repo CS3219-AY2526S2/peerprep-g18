@@ -80,7 +80,7 @@ redis_auth: redis.Redis = None
 
 def get_http_client():
     global http_client
-    if http_client is None:
+    if http_client is None or http_client.is_closed:
         http_client = httpx.AsyncClient()
     return http_client
 
