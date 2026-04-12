@@ -27,11 +27,12 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/peerprep/history-service:$IMAGE_TAG ./backend/history-service
+          docker build -t $ECR_REGISTRY/peerprep/history-service:latest -t $ECR_REGISTRY/peerprep/history-service:$IMAGE_TAG ./backend/history-service
+          docker push $ECR_REGISTRY/peerprep/history-service:latest
           docker push $ECR_REGISTRY/peerprep/history-service:$IMAGE_TAG
 
       - name: Update Lambda Function
         run: |
           aws lambda update-function-code \
-            --function-name history-service \
+            --function-name peerprep-history-service \
             --image-uri ${{ steps.login-ecr.outputs.registry }}/peerprep/history-service:${{ github.sha }}

@@ -630,13 +630,14 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/peerprep/question-service:$IMAGE_TAG ./backend/question-service
+          docker build -t $ECR_REGISTRY/peerprep/question-service:latest -t $ECR_REGISTRY/peerprep/question-service:$IMAGE_TAG ./backend/question-service
+          docker push $ECR_REGISTRY/peerprep/question-service:latest
           docker push $ECR_REGISTRY/peerprep/question-service:$IMAGE_TAG
 
       - name: Update Lambda Function
         run: |
           aws lambda update-function-code \
-            --function-name question-service \
+            --function-name peerprep-question-service \
             --image-uri ${{ steps.login-ecr.outputs.registry }}/peerprep/question-service:${{ github.sha }}
 ```
 
@@ -649,7 +650,7 @@ This template applies to: `matching-service` and `collaboration-service`. Unlike
 
       - name: Download Task Definition
         run: |
-          aws ecs describe-task-definition --task-definition collaboration-service --query taskDefinition > task-definition.json
+          aws ecs describe-task-definition --task-definition peerprep-collaboration-service --query taskDefinition > task-definition.json
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
@@ -663,7 +664,7 @@ This template applies to: `matching-service` and `collaboration-service`. Unlike
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: collaboration-service
+          service: peerprep-collaboration-service
           cluster: peerprep-cluster
           wait-for-service-stability: true
 ```
