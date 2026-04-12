@@ -10,3 +10,6 @@ async def health_check():
 
 # Include routes with the /question prefix
 app.include_router(question_router, prefix="/question", tags=["Questions"])
+
+from mangum import Mangum
+handler = Mangum(app, lifespan="off")

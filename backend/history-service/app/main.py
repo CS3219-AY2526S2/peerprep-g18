@@ -10,3 +10,6 @@ async def health_check():
 
 # Include routes with the /history prefix
 app.include_router(history_router, prefix="/history", tags=["History"])
+
+from mangum import Mangum
+handler = Mangum(app, lifespan="off")

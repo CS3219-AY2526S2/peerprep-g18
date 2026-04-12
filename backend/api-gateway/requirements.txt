@@ -3,3 +3,5 @@ uvicorn==0.24.0
 httpx==0.25.1
 firebase-admin==6.6.0
 redis[asyncio]>=5.0
+mangum>=0.17.0
+awslambdaric>=2.0.0

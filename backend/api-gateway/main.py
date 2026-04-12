@@ -48,12 +48,12 @@ async def shutdown_event():
 # ==========================================
 # Maps the first part of the URL path to the internal microservice address.
 SERVICES = {
-    "users":    "http://user-service:6767",
-    "admin":    "http://user-service:6767",
-    "question": "http://question-service:6768",
-    "matching": "http://matching-service:6769",
-    "collab":   "http://collab-service:4000",
-    "history":  "http://history-service:6770",
+    "users":    os.getenv("USER_SERVICE_URL", "http://user-service:6767"),
+    "admin":    os.getenv("USER_SERVICE_URL", "http://user-service:6767"),
+    "question": os.getenv("QUESTION_SERVICE_URL", "http://question-service:6768"),
+    "matching": os.getenv("MATCHING_SERVICE_URL", "http://matching-service:6769"),
+    "collab":   os.getenv("COLLAB_SERVICE_URL", "http://collab-service:4000"),
+    "history":  os.getenv("HISTORY_SERVICE_URL", "http://history-service:6770"),
 }
 
 # Routes that DO NOT require authentication (e.g., login, registration)
@@ -140,8 +140,9 @@ async def initialize_collab_session(request: Request):
         # Fetch question
         question_id = "1"
         try:
+            target_question_service = os.getenv("QUESTION_SERVICE_URL", "http://question-service:6768").rstrip("/")
             response = await http_client.get(
-                "http://question-service:6768/question/", 
+                f"{target_question_service}/question/", 
                 params={"topic": topic, "difficulty": difficulty},
                 timeout=5.0
             )
@@ -201,7 +202,7 @@ async def gateway_proxy(request: Request, path: str):
     if service_prefix not in SERVICES:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    target_base_url = SERVICES[service_prefix]
+    target_base_url = SERVICES[service_prefix].rstrip("/")
     target_url = f"{target_base_url}/{path}"
 
     if request.url.query:
@@ -257,6 +258,9 @@ async def gateway_proxy(request: Request, path: str):
         status_code=target_response.status_code,
         headers=filtered_headers
     )
+
+from mangum import Mangum
+handler = Mangum(app, lifespan="off")
 
 if __name__ == "__main__":
     import uvicorn

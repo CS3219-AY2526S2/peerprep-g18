@@ -16,5 +16,5 @@ COPY . .
 # Make port 6767 available to the world outside this container
 EXPOSE 6767
 
-# Run uvicorn server on port 6767
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "6767", "--reload"]
+# Run Lambda handler
+CMD ["python", "-m", "awslambdaric", "main.handler"]

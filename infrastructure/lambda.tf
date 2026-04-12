@@ -61,8 +61,7 @@ resource "aws_apigatewayv2_stage" "default" {
   auto_deploy = true
 }
 
-# 4. Helper for Lambda Integration & Permissions
-# We use a loop for similar stateless microservices
+# 4. Lambda Functions for Microservices
 locals {
   lambda_services = {
     "api-gateway"      = { port = 8000 }
@@ -73,8 +72,6 @@ locals {
   }
 }
 
-# Placeholder image for bootstrapping (as per Step 4)
-# In Phase 2, this will point to the real ECR images
 resource "aws_lambda_function" "services" {
   for_each      = local.lambda_services
   function_name = "peerprep-${each.key}"
@@ -91,40 +88,50 @@ resource "aws_lambda_function" "services" {
 
   environment {
     variables = {
-      REDIS_HOST   = aws_elasticache_cluster.redis.cache_nodes[0].address
-      REDIS_PORT   = "6379"
-      FRONTEND_URL = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}" # Placeholder; managed by CI/CD
+      REDIS_SESSIONS_HOST  = aws_elasticache_cluster.redis.cache_nodes[0].address
+      REDIS_AUTH_HOST      = aws_elasticache_cluster.redis.cache_nodes[0].address
+      FRONTEND_URL         = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}"
+      USER_SERVICE_URL     = aws_lambda_function_url.service_urls["user-service"].function_url
+      QUESTION_SERVICE_URL = aws_lambda_function_url.service_urls["question-service"].function_url
+      HISTORY_SERVICE_URL  = aws_lambda_function_url.service_urls["history-service"].function_url
+      AI_SERVICE_URL       = aws_lambda_function_url.service_urls["ai-service"].function_url
+      MATCHING_SERVICE_URL = "http://${aws_lb.main_alb.dns_name}"
+      COLLAB_SERVICE_URL   = "http://${aws_lb.main_alb.dns_name}"
     }
   }
 
   lifecycle {
-    ignore_changes = [image_uri, environment] # Let CI/CD manage both images and env vars
+    ignore_changes = [image_uri, environment]
   }
 }
 
-# API Gateway Integration for each service
-resource "aws_apigatewayv2_integration" "lambda_integration" {
+# Function URLs for internal microservice communication
+resource "aws_lambda_function_url" "service_urls" {
   for_each           = local.lambda_services
+  function_name      = aws_lambda_function.services[each.key].function_name
+  authorization_type = "NONE" # Simple for now; secure with IAM in prod
+}
+
+# API Gateway Integration for the API Gateway Lambda (Entry point)
+resource "aws_apigatewayv2_integration" "gateway_integration" {
   api_id             = aws_apigatewayv2_api.http_api.id
   integration_type   = "AWS_PROXY"
   integration_method = "POST"
-  integration_uri    = aws_lambda_function.services[each.key].invoke_arn
+  integration_uri    = aws_lambda_function.services["api-gateway"].invoke_arn
 }
 
-# Route each service path (e.g., /user/*) to its Lambda
-resource "aws_apigatewayv2_route" "routes" {
-  for_each  = local.lambda_services
+# Route EVERYTHING to the API Gateway Lambda
+resource "aws_apigatewayv2_route" "catch_all" {
   api_id    = aws_apigatewayv2_api.http_api.id
-  route_key = "ANY /${each.key}/{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration[each.key].id}"
+  route_key = "ANY /{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.gateway_integration.id}"
 }
 
-# Allow API Gateway to invoke Lambda
-resource "aws_lambda_permission" "api_gw" {
-  for_each      = local.lambda_services
+# Allow API Gateway to invoke the Gateway Lambda
+resource "aws_lambda_permission" "api_gw_to_gateway" {
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.services[each.key].function_name
+  function_name = aws_lambda_function.services["api-gateway"].function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
 }

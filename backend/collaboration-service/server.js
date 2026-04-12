@@ -421,7 +421,8 @@ async function processGeminiCommand(sessionId, prompt, usageKey) {
     if (metaRaw) {
       const meta = JSON.parse(metaRaw);
       try {
-        const qRes = await axios.get(`http://question-service:6768/question/${meta.questionId}`);
+        const targetQuestionService = (process.env.QUESTION_SERVICE_URL || 'http://question-service:6768').replace(/\/$/, '');
+        const qRes = await axios.get(`${targetQuestionService}/question/${meta.questionId}`);
         questionStatement = qRes.data.statement;
       } catch (qErr) {
         console.error('[Gemini] Failed to fetch question statement:', qErr.message);
@@ -449,7 +450,8 @@ ${currentCode}
 
     // 2. Call AI Service
     try {
-      const aiRes = await axios.post('http://ai-service:6771/generate', {
+      const targetAiService = (process.env.AI_SERVICE_URL || 'http://ai-service:6771').replace(/\/$/, '');
+      const aiRes = await axios.post(`${targetAiService}/generate`, {
         prompt: prompt,
         context: contextString
       }, { timeout: 15000 });
@@ -492,7 +494,8 @@ ${currentCode}
  */
 async function hasMeaningfulCode(questionId, finalCode) {
   try {
-    const qRes = await axios.get(`http://question-service:6768/question/${questionId}`);
+    const targetQuestionService = (process.env.QUESTION_SERVICE_URL || 'http://question-service:6768').replace(/\/$/, '');
+    const qRes = await axios.get(`${targetQuestionService}/question/${questionId}`);
     const template = qRes.data.template || '';
     
     // Normalize both for a fairer comparison (trim)
@@ -543,7 +546,8 @@ async function handleUserEnded(sessionId, userId, finalCode) {
     submittedBy: userId
   };
   console.log(`[history] Saving history for ${userId} (session=${sessionId}, question=${meta.questionId})`);
-  await axios.post('http://history-service:6770/history', payload);
+  const targetHistoryService = (process.env.HISTORY_SERVICE_URL || 'http://history-service:6770').replace(/\/$/, '');
+  await axios.post(`${targetHistoryService}/history`, payload);
   console.log(`[history] History saved successfully for ${userId} (session=${sessionId})`);
 
   // Only clear the active session pointer if it still refers to this session —
@@ -587,7 +591,8 @@ async function handleSessionEnded(sessionId) {
         endedAt: Date.now() / 1000,
         submittedBy: uid
       };
-      await axios.post('http://history-service:6770/history', payload);
+      const targetHistoryService = (process.env.HISTORY_SERVICE_URL || 'http://history-service:6770').replace(/\/$/, '');
+      await axios.post(`${targetHistoryService}/history`, payload);
       console.log(`[session-cleanup] Catch-up history saved for ${uid} (session=${sessionId})`);
     } else {
       console.log(`[session-cleanup] ${uid} already saved, skipping (session=${sessionId})`);

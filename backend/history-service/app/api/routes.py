@@ -38,7 +38,8 @@ async def save_history(payload: HistoryBase):
     qn_id = payload.questionId
     start_time_iso = payload.startedAt.isoformat()
 
-    url = f"http://question-service:6768/question/{qn_id}"
+    target_question_service = os.getenv("QUESTION_SERVICE_URL", "http://question-service:6768").rstrip("/")
+    url = f"{target_question_service}/question/{qn_id}"
     params = {"start_time": start_time_iso}
 
     try:

@@ -4,4 +4,5 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 EXPOSE 6771
-CMD ["python", "main.py"]
+# Run Lambda handler
+CMD ["python", "-m", "awslambdaric", "main.handler"]

@@ -536,13 +536,6 @@ Stateless services (User, Question, History, AI, and API Gateway) are deployed a
 
     resource "aws_lambda_function" "services" {
       # ... (other config)
-      environment {
-        variables = {
-          REDIS_HOST   = aws_elasticache_cluster.redis.cache_nodes[0].address
-          FRONTEND_URL = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}" # Placeholder; managed by CI/CD
-        }
-      }
-
       lifecycle {
         ignore_changes = [image_uri, environment] # Let CI/CD manage both images and env vars
       }
@@ -730,3 +723,44 @@ To ensure a smooth first-time deployment without "Circular Dependency" errors, f
     *   Add them to your GitHub Secrets.
     *   Push a small change (e.g., a comment) to each service to trigger the newly created GitHub Actions.
 5.  **Validation**: Once the pipelines finish, visit your CloudFront URL. Your PeerPrep platform is now live and fully automated!
+
+---
+
+## 5. Lambda-ization & Internal Routing Architecture
+
+To ensure cost-efficiency and security, the PeerPrep backend is deployed using a hybrid serverless approach. This requires specific adaptations to standard FastAPI/Docker patterns.
+
+### 5.1 The Mangum Adapter
+Standard FastAPI applications use `uvicorn` to handle HTTP requests. However, AWS Lambda expects a specific JSON event format. We use the **Mangum** adapter in every `main.py`:
+```python
+from mangum import Mangum
+handler = Mangum(app, lifespan="off")
+```
+This allows the same codebase to run as a server locally and as a function in AWS.
+
+### 5.2 Container Entry Points
+Our Dockerfiles use `awslambdaric` (the Lambda Runtime Interface Client) as the default entry point.
+*   **Production (AWS):** The Lambda runtime calls `python -m awslambdaric main.handler`.
+*   **Development (Local):** The `docker-compose.yml` file uses `command: uvicorn main:app ...` to override the entry point, allowing for hot-reloading and standard server behavior.
+
+### 5.3 Internal Communication (Service Discovery)
+To maintain security and ensure the code works in both Local Development and AWS, we use **Environment-Based Service Discovery**.
+
+*   **The Rule:** Hardcoded internal URLs (e.g., `http://user-service:6767`) are strictly forbidden in the source code. All internal requests must use environment variables (e.g., `os.getenv("USER_SERVICE_URL")`).
+*   **Service Discovery Logic:**
+    *   **Local Dev:** `docker-compose.yml` injects standard Docker network hostnames (e.g., `http://user-service:6767`).
+    *   **AWS Production:** Terraform dynamically injects the **Lambda Function URLs** (for stateless services) or the **ALB DNS Name** (for stateful services).
+*   **Routing Path:** The **API Gateway Lambda** acts as the primary public entry point. It verifies Firebase JWTs and then proxies requests to the internal service URLs. However, any service that needs to talk to another (e.g., Collab calling Question Service) also uses these injected variables to find its target.
+
+This architecture ensures that **no internal microservice is exposed to the public internet** except through the authenticated Gateway, while allowing the codebase to remain environment-agnostic.
+
+### 5.4 Stateful Service Port Management (ECS)
+Unlike stateless services (Lambda), stateful services running on ECS (e.g., Matching, Collaboration) must listen on a specific port that matches the **Container Port** defined in `ecs.tf`.
+
+*   **The Rule:** Stateful services must support a `PORT` environment variable.
+*   **The Dockerfile Pattern:** To ensure compatibility, use the following `CMD` pattern in your Dockerfiles:
+    ```dockerfile
+    # Defaults to a port, but allows override by ECS/Docker-Compose
+    CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}"]
+    ```
+*   **Terraform Alignment:** Terraform (in `ecs.tf`) injects this `PORT` variable dynamically to match the ALB listener rules.

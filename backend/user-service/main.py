@@ -338,3 +338,6 @@ def update_avatar(user_id: str, data: AvatarUpdate, x_user_id: str = Header(...)
 
     doc_ref.update({"avatar_id": data.avatar_id})
     return {"message": "Avatar updated successfully"}
+
+from mangum import Mangum
+handler = Mangum(app, lifespan="off")
