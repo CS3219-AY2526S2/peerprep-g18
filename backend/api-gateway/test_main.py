@@ -9,6 +9,8 @@ import firebase_admin.credentials
 # Mocking external dependencies BEFORE importing the app
 mock_redis = MagicMock()
 mock_http_client = AsyncMock()
+# Ensure get_http_client() doesn't think the mock is closed
+mock_http_client.is_closed = False
 
 # This part is tricky because main.py does 'import firebase_admin' etc. at top level.
 with patch('firebase_admin.credentials.Certificate'), \
