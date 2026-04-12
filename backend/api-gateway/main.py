@@ -315,7 +315,7 @@ async def gateway_proxy(request: Request, path: str):
     )
 
 from mangum import Mangum
-handler = Mangum(app, lifespan="off")
+handler = Mangum(app, lifespan="auto")
 
 if __name__ == "__main__":
     import uvicorn
