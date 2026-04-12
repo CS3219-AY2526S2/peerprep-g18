@@ -12,8 +12,8 @@ with patch('firebase_admin.credentials.Certificate'), \
      patch('firebase_admin.initialize_app'), \
      patch('firebase_admin.firestore.client', return_value=mock_db), \
      patch('httpx.AsyncClient', return_value=mock_http_client):
-    # Import app from the main module in the current directory (backend/history-service/app)
-    from app.main import app
+    # Import app from the main module and rename it to avoid collision with 'app' package
+    from app.main import app as fastapi_app
 
 # Inject mock client for history-service lazy initialization
 # This needs to match the import in app/api/routes.py
@@ -22,14 +22,14 @@ app.api.routes.http_client = mock_http_client
 
 def test_health_check():
     """Verify health check returns healthy."""
-    client = TestClient(app)
+    client = TestClient(fastapi_app)
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
 
 def test_get_user_history_empty():
     """Test getting history for a user with no history."""
-    client = TestClient(app)
+    client = TestClient(fastapi_app)
     
     # Mock empty stream
     mock_db.collection.return_value.where.return_value.select.return_value.order_by.return_value.limit.return_value.offset.return_value.stream.return_value = []
@@ -52,7 +52,7 @@ def test_get_user_history_empty():
 @pytest.mark.asyncio
 async def test_save_history():
     """Test saving history triggers external question fetch."""
-    client = TestClient(app)
+    client = TestClient(fastapi_app)
     
     payload = {
         "sessionId": "test-session",
