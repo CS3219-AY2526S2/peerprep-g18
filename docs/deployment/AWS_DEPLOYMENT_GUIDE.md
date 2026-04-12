@@ -588,71 +588,145 @@ Once this manual "bootstrap" apply is successful and the infrastructure is "stan
 
 ## 3. Full CI/CD Automation (GitHub Actions)
 
-We will fully automate the deployment using GitHub Actions. Whenever code is pushed to the `main` branch, the pipeline will build Docker images, push them to ECR, and update the respective AWS services.
+We will automate the build-test-deploy lifecycle using GitHub Actions. To keep our pipelines maintainable and isolated, we use a **modular workflow strategy**. Instead of one giant file, we create small, focused workflows that trigger only when code in their specific directory changes.
 
-### Prerequisites
-Add these secrets to your GitHub Repository (`Settings > Secrets and variables > Actions`):
-*   `AWS_ACCESS_KEY_ID`
-*   `AWS_SECRET_ACCESS_KEY`
-*   `AWS_REGION` (e.g., `ap-southeast-1`)
+### Step 3.1: GitHub Secrets Setup
+Before creating workflows, you must store your AWS credentials and infrastructure endpoints securely. 
+1.  Navigate to your GitHub Repository > **Settings** > **Secrets and variables** > **Actions**.
+2.  Click **New repository secret** and add the following:
+    *   `AWS_ACCESS_KEY_ID`: Your IAM user access key.
+    *   `AWS_SECRET_ACCESS_KEY`: Your IAM user secret key.
+    *   `AWS_REGION`: `ap-southeast-1`.
+    *   `AWS_ACCOUNT_ID`: Your 12-digit AWS Account ID.
+    *   `CLOUDFRONT_DISTRIBUTION_ID`: The ID from your `frontend.tf` output.
+    *   `FRONTEND_URL`: The full `https://...` URL from your `frontend_cloudfront_url` output.
+    *   `BACKEND_API_URL`: The URL for your stateless services (AWS HTTP API Gateway endpoint).
+    *   `BACKEND_ALB_URL`: The DNS name for your stateful services (ALB DNS name).
 
-### 3.1 Pipeline Workflows (`.github/workflows/`)
+### Step 3.2: The Lambda Pipeline (Stateless Services)
+This template applies to: `api-gateway`, `user-service`, `question-service`, `history-service`, and `ai-service`.
 
-To keep deployments fast and isolated, create a separate workflow file for each component.
+**File:** `.github/workflows/deploy-question-service.yml`
+```yaml
+name: Deploy Question Service
 
-#### Example 1: Lambda Service Pipeline (`question-service.yml`)
-1.  **Trigger:** On push to `main` with changes in `backend/question-service/**`.
-2.  **Steps:**
-    *   Checkout code & Configure AWS credentials.
-    *   Login to Amazon ECR.
-    *   Build the Docker image and push to ECR with a unique tag (e.g., the commit SHA).
-    *   Deploy: Run an AWS CLI command to force the Lambda function to use the newly pushed image:
-        `aws lambda update-function-code --function-name question-service --image-uri <ECR_URI>:<TAG>`
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'backend/question-service/**' ]
 
-#### Example 2: ECS Pipeline (`collaboration-service.yml`)
-1.  **Trigger:** On push to `main` with changes in `backend/collaboration-service/**`.
-2.  **Steps:**
-    *   Checkout code & Configure AWS credentials.
-    *   Login to Amazon ECR.
-    *   Build and push Docker image.
-    *   Use the `aws-actions/amazon-ecs-render-task-definition` action to insert the new image ID into the ECS Task Definition JSON.
-    *   Use the `aws-actions/amazon-ecs-deploy-task-definition` action to seamlessly deploy the new task to the ECS Cluster (handling zero-downtime rolling updates automatically).
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-#### Example 3: Frontend Pipeline (`frontend.yml`)
-1.  **Trigger:** On push to `main` with changes in `frontend/**`.
-2.  **Steps:**
-    *   Checkout code & Setup Node.js.
-    *   Inject AWS URLs into the `.env` file at build time.
-    *   Run `npm install` and `npm run build`.
-    *   Configure AWS credentials.
-    *   Deploy: Sync the `dist/` folder to the S3 bucket:
-        `aws s3 sync ./dist s3://peerprep-frontend-bucket --delete`
-    *   Cache Invalidation: Force CloudFront to serve the latest version immediately:
-        `aws cloudfront create-invalidation --distribution-id $CF_DIST_ID --paths "/*"`
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/peerprep/question-service:$IMAGE_TAG ./backend/question-service
+          docker push $ECR_REGISTRY/peerprep/question-service:$IMAGE_TAG
+
+      - name: Update Lambda Function
+        run: |
+          aws lambda update-function-code \
+            --function-name question-service \
+            --image-uri ${{ steps.login-ecr.outputs.registry }}/peerprep/question-service:${{ github.sha }}
+```
+
+### Step 3.3: The ECS Pipeline (Stateful Services)
+This template applies to: `matching-service` and `collaboration-service`. Unlike Lambda, ECS requires updating a **Task Definition**.
+
+**File:** `.github/workflows/deploy-collaboration-service.yml`
+```yaml
+# ... (Standard Checkout & ECR Login Steps as above)
+
+      - name: Download Task Definition
+        run: |
+          aws ecs describe-task-definition --task-definition collaboration-service --query taskDefinition > task-definition.json
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: collaboration-service
+          image: ${{ steps.login-ecr.outputs.registry }}/peerprep/collaboration-service:${{ github.sha }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: collaboration-service
+          cluster: peerprep-cluster
+          wait-for-service-stability: true
+```
+
+### Step 3.4: The Frontend Pipeline (S3 + CloudFront)
+**File:** `.github/workflows/deploy-frontend.yml`
+```yaml
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'frontend/**' ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build Production Assets
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to S3
+        run: aws s3 sync frontend/dist s3://peerprep-frontend-${{ secrets.AWS_ACCOUNT_ID }} --delete
+
+      - name: Invalidate CloudFront Cache
+        run: aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+```
 
 ---
 
-## 4. Bootstrapping Strategy (The "Chicken and Egg" Problem)
+## 4. Bootstrapping Strategy (The "Final Push")
 
-Terraform cannot deploy Lambda or ECS if the ECR repositories are empty because the "image" parameter is mandatory.
+To ensure a smooth first-time deployment without "Circular Dependency" errors, follow this exact sequence:
 
-### Phase 1: Registry & Networking
-Run Terraform code to deploy ONLY the VPC and ECR repositories.
-```bash
-terraform apply -target=module.vpc -target=aws_ecr_repository.service_repos
-```
-
-### Phase 2: Initial Image Push
-1.  Build and push your Docker images manually (or via a temporary GitHub Action) to the 7 new ECR repositories. (See **Step 2.4.1** for the automated script in `docs/deployment/scripts/`).
-2.  Ensure each repository has at least one image tagged `:latest`.
-
-### Phase 3: Full Infrastructure
-Now that images exist, run a full `terraform apply` to deploy Lambda, ECS, ALB, and CloudFront.
-```bash
-terraform apply
-```
-
-### Phase 4: Environment Variables Loop
-1.  Retrieve the generated AWS URLs (CloudFront, ALB, API Gateway).
-2.  Add these as GitHub Secrets so the CI/CD pipelines can build the `.env` files.
-3.  Trigger the pipelines one last time so services are aware of each other.
+1.  **Phase 1: Registry & Networking**: Run `terraform apply -target=module.vpc -target=aws_ecr_repository.service_repos`. This creates the "landing zones" for your code.
+2.  **Phase 2: Bootstrap Images**: Run the `scripts/bootstrap_ecr.sh` (or `.ps1`) script. This pushes a `:latest` image for all 7 services so Terraform has a valid URI to reference.
+3.  **Phase 3: Core Compute**: Run a full `terraform apply`. This provisions your Lambdas, ECS Cluster, ALB, and CloudFront.
+4.  **Phase 4: Connect CI/CD**:
+    *   Grab the CloudFront URL and ALB DNS name from the Terraform outputs.
+    *   Add them to your GitHub Secrets.
+    *   Push a small change (e.g., a comment) to each service to trigger the newly created GitHub Actions.
+5.  **Validation**: Once the pipelines finish, visit your CloudFront URL. Your PeerPrep platform is now live and fully automated!
