@@ -7,17 +7,71 @@ import os
 import uuid
 import json
 import asyncio
+import boto3
+from botocore.exceptions import ClientError
 from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import redis.asyncio as redis
 import firebase_admin
 from firebase_admin import credentials, auth
 
-cred = credentials.Certificate("firebase-service-account.json")
+# ==========================================
+# FIREBASE INITIALIZATION (WITH SECRETS MGR)
+# ==========================================
+def get_firebase_credentials():
+    secret_file = "firebase-service-account.json"
+    if os.path.exists(secret_file):
+        return credentials.Certificate(secret_file)
+
+    # Fallback to AWS Secrets Manager (for Lambda deployment)
+    print("Local firebase-service-account.json not found. Attempting to fetch from AWS Secrets Manager...")
+    secret_name = "peerprep/firebase-main"
+    region_name = os.getenv("AWS_REGION", "ap-southeast-1")
+
+    session = boto3.session.Session()
+    client = session.client(service_name='secretsmanager', region_name=region_name)
+
+    try:
+        get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+        if 'SecretString' in get_secret_value_response:
+            secret_data = json.loads(get_secret_value_response['SecretString'])
+            # Certificate can also take a dict
+            return credentials.Certificate(secret_data)
+        else:
+            raise Exception("SecretString not found in Secrets Manager response")
+    except ClientError as e:
+        print(f"FAILED to fetch secret from AWS: {str(e)}")
+        # If we are local and don't have the file, this will crash anyway.
+        # But if we're in Lambda, this is a fatal startup error.
+        raise e
+
+# Initialize Firebase
 if not firebase_admin._apps:
-    firebase_admin.initialize_app(cred)
+    try:
+        cred = get_firebase_credentials()
+        firebase_admin.initialize_app(cred)
+        print("Firebase Admin initialized successfully.")
+    except Exception as e:
+        print(f"CRITICAL: Firebase initialization failed: {str(e)}")
 
 app = FastAPI(title="PeerPrep API Gateway")
+
+# ==========================================
+# CORS CONFIGURATION
+# ==========================================
+# This handles preflight (OPTIONS) requests. 
+# In AWS API Gateway HTTP APIs with a proxy route, the Lambda must handle CORS.
+frontend_url = os.getenv("FRONTEND_URL", "*")
+origins = [frontend_url, "http://localhost:5173"] if frontend_url != "*" else ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True if frontend_url != "*" else False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 http_client = httpx.AsyncClient()
 redis_sessions: redis.Redis = None

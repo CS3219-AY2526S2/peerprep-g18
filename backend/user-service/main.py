@@ -5,6 +5,9 @@
 
 import os
 import time
+import json
+import boto3
+from botocore.exceptions import ClientError
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, EmailStr, Field, model_validator
@@ -16,9 +19,44 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Initialize Firebase Admin
-cred = credentials.Certificate("firebase-service-account.json")
-firebase_admin.initialize_app(cred)
+# ==========================================
+# FIREBASE & ENV INITIALIZATION (WITH SECRETS MGR)
+# ==========================================
+def load_secrets():
+    """Load both Firebase and Backend Env secrets from AWS Secrets Manager."""
+    region_name = os.getenv("AWS_REGION", "ap-southeast-1")
+    session = boto3.session.Session()
+    client = session.client(service_name='secretsmanager', region_name=region_name)
+
+    # 1. Load Firebase Credentials
+    secret_file = "firebase-service-account.json"
+    if os.path.exists(secret_file):
+        cred = credentials.Certificate(secret_file)
+    else:
+        print("Local firebase-service-account.json not found. Fetching from AWS...")
+        try:
+            resp = client.get_secret_value(SecretId="peerprep/firebase-main")
+            cred = credentials.Certificate(json.loads(resp['SecretString']))
+        except Exception as e:
+            print(f"CRITICAL: Failed to fetch Firebase secret: {e}")
+            raise e
+    
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(cred)
+        print("Firebase Admin initialized.")
+
+    # 2. Load Backend Env Vars (SMTP, etc.)
+    try:
+        resp = client.get_secret_value(SecretId="peerprep/backend-env")
+        env_vars = json.loads(resp['SecretString'])
+        for key, value in env_vars.items():
+            if not os.getenv(key): # Don't override existing env vars
+                os.environ[key] = str(value)
+        print("Backend environment variables loaded from Secrets Manager.")
+    except Exception as e:
+        print(f"Note: Could not load peerprep/backend-env from Secrets Manager: {e}")
+
+load_secrets()
 db = firestore.client()
 
 # Redis client for auth invalidation signals (read by the API gateway)

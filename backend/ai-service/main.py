@@ -1,10 +1,33 @@
 import os
+import json
+import boto3
 from google import genai
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
 app = FastAPI()
+
+def load_secrets():
+    """Load Backend Env secrets from AWS Secrets Manager."""
+    if os.getenv("GEMINI_API_KEY"):
+        return
+
+    region_name = os.getenv("AWS_REGION", "ap-southeast-1")
+    session = boto3.session.Session()
+    client = session.client(service_name='secretsmanager', region_name=region_name)
+
+    try:
+        resp = client.get_secret_value(SecretId="peerprep/backend-env")
+        env_vars = json.loads(resp['SecretString'])
+        for key, value in env_vars.items():
+            if not os.getenv(key):
+                os.environ[key] = str(value)
+        print("Backend environment variables loaded from Secrets Manager.")
+    except Exception as e:
+        print(f"Note: Could not load peerprep/backend-env from Secrets Manager: {e}")
+
+load_secrets()
 
 # Configure Gemini
 api_key = os.getenv("GEMINI_API_KEY")
