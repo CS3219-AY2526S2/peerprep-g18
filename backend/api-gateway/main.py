@@ -74,13 +74,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-http_client = httpx.AsyncClient()
+http_client: httpx.AsyncClient = None
 redis_sessions: redis.Redis = None
 redis_auth: redis.Redis = None
 
 @app.on_event("startup")
 async def startup():
-    global redis_sessions, redis_auth
+    global redis_sessions, redis_auth, http_client
+    http_client = httpx.AsyncClient()
 
     sessions_host = os.getenv("REDIS_SESSIONS_HOST", "redis-sessions")
     redis_sessions = redis.Redis(host=sessions_host, port=6379, decode_responses=True)
