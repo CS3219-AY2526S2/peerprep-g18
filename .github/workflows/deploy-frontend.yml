@@ -19,8 +19,8 @@ jobs:
       - name: Build Production Assets
         working-directory: frontend
         env:
-          VITE_GATEWAY_URL: ${{ secrets.BACKEND_API_URL }}
-          VITE_ALB_URL: ${{ secrets.BACKEND_ALB_URL }}
+          VITE_GATEWAY_URL: "/api"
+          VITE_ALB_URL: ""
         run: |
           npm install
           npm run build
