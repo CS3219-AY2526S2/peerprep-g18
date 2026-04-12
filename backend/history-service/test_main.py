@@ -56,12 +56,14 @@ async def test_save_history():
     
     payload = {
         "sessionId": "test-session",
-        "questionId": "1",
+        "user1_id": "user-1",
+        "user2_id": "user-2",
+        "questionId": 1,
         "title": "Old Title",
         "topic": "Strings",
         "difficulty": "Easy",
-        "content": "code",
-        "submittedBy": "test-user",
+        "finalCode": "print('hello')",
+        "submittedBy": "user-1",
         "startedAt": "2026-04-12T20:00:00Z",
         "endedAt": "2026-04-12T20:10:00Z"
     }
