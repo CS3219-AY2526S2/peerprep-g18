@@ -250,7 +250,7 @@ output "redis_endpoint" {
 Before we can deploy our services, we need a place to store our Docker images. We use **Amazon ECR**, a fully managed Docker container registry. We will create one private repository for each of our 7 microservices.
 
 #### A. Repository Configuration (`infrastructure/ecr.tf`)
-We use a `for_each` loop to cleanly create all repositories at once and attach a **Lifecycle Policy** to each. This policy automatically deletes old images (keeping only the last 5), which is crucial for controlling storage costs in a development environment.
+We use a `for_each` loop to cleanly create all repositories at once and attach a **Lifecycle Policy** to each. This policy automatically deletes old images (keeping only the last 3), which is crucial for controlling storage costs in a development environment.
 
 ```hcl
 locals {
@@ -290,11 +290,11 @@ resource "aws_ecr_lifecycle_policy" "cleanup_policy" {
   policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Keep only the last 5 images to save on storage costs"
+      description  = "Keep only the last 3 images to save on storage costs"
       selection = {
         tagStatus     = "any"
         countType     = "imageCountMoreThan"
-        countNumber   = 5
+        countNumber   = 3
       }
       action = {
         type = "expire"
@@ -318,7 +318,7 @@ Run these commands in the `infrastructure/` directory to build your image regist
 #### C. Validation
 1.  Open the **Amazon ECR Console**.
 2.  Verify that 7 repositories starting with `peerprep/` (e.g., `peerprep/api-gateway`) are listed.
-3.  Click on any repository and check the **Lifecycle policy** tab to ensure the "Keep last 5 images" rule is active.
+3.  Click on any repository and check the **Lifecycle policy** tab to ensure the "Keep last 3 images" rule is active.
 
 ### Step 2.4.1: Initial Docker Image Upload
 Before deploying the compute layer (Step 2.5), each ECR repository must contain at least one image. AWS validates the image URI during the creation of Lambda functions and ECS Task Definitions; if the repository is empty, the deployment will fail.

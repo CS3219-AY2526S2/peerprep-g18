@@ -14,8 +14,8 @@ These costs are incurred as long as the infrastructure is provisioned. Note the 
 | **Public IPv4** | 1x Elastic IP for NAT ($0.005/hr) | ~$3.60 |
 | **ElastiCache** | 1x `cache.t4g.small` (Valkey/Redis) | ~$23.36 ($0.032/hr) |
 | **Secrets Manager** | 4 Secret Containers | $1.60 ($0.40/secret) |
-| **ECR Storage** | 7 Repos (35 images @ 200MB) | ~$0.70 ($0.10/GB) |
-| **TOTAL BASELINE** | | **~$72.33 / month** |
+| **ECR Storage** | 7 Repos (21 images @ 200MB) | ~$0.42 ($0.10/GB) |
+| **TOTAL BASELINE** | | **~$72.05 / month** |
 
 ---
 

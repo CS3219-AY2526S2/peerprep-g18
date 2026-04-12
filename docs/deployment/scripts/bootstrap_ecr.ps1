@@ -6,7 +6,7 @@ param (
     [string]$REGION = "ap-southeast-1"
 )
 
-$ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+$ECR_REGISTRY = "$($AWS_ACCOUNT_ID.Trim()).dkr.ecr.$($REGION.Trim()).amazonaws.com"
 
 $SERVICES = @(
     "api-gateway",
@@ -26,7 +26,7 @@ Write-Host "Starting ECR Bootstrap for account $AWS_ACCOUNT_ID in region $REGION
 
 # Authenticate Docker to ECR
 Write-Host "Authenticating Docker to ECR..." -ForegroundColor Yellow
-(aws ecr get-login-password --region $REGION) | docker login --username AWS --password-stdin $ECR_REGISTRY
+cmd /c "aws ecr get-login-password --region $($REGION.Trim()) | docker login --username AWS --password-stdin $ECR_REGISTRY"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Error: Docker authentication to ECR failed. Check your AWS credentials and region." -ForegroundColor Red

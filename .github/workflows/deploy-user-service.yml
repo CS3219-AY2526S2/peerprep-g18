@@ -2,8 +2,11 @@ name: Deploy User Service
 
 on:
   push:
-    branches: [ main, deployment ]
-    paths: [ 'backend/user-service/**' ]
+    branches: [ main ]
+    paths:
+      - 'backend/user-service/**'
+      - '.github/workflows/deploy-user-service.yml'
+  workflow_dispatch:
 
 jobs:
   deploy:

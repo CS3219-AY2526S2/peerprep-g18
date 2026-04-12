@@ -219,9 +219,9 @@ resource "aws_ecs_task_definition" "services" {
       { name = "REDIS_PORT", value = "6379" },
       { name = "REDIS_SESSIONS_HOST", value = aws_elasticache_cluster.redis.cache_nodes[0].address },
       { name = "REDIS_PUBSUB_HOST", value = aws_elasticache_cluster.redis.cache_nodes[0].address },
-      { name = "QUESTION_SERVICE_URL", value = aws_lambda_function_url.service_urls["question-service"].function_url },
-      { name = "HISTORY_SERVICE_URL", value = aws_lambda_function_url.service_urls["history-service"].function_url },
-      { name = "AI_SERVICE_URL", value = aws_lambda_function_url.service_urls["ai-service"].function_url }
+      { name = "QUESTION_SERVICE_URL", value = aws_lambda_function_url.internal_service_urls["question-service"].function_url },
+      { name = "HISTORY_SERVICE_URL", value = aws_lambda_function_url.internal_service_urls["history-service"].function_url },
+      { name = "AI_SERVICE_URL", value = aws_lambda_function_url.internal_service_urls["ai-service"].function_url }
     ]
     logConfiguration = {
       logDriver = "awslogs"

@@ -2,8 +2,11 @@ name: Deploy API Gateway
 
 on:
   push:
-    branches: [ main, deployment ]
-    paths: [ 'backend/api-gateway/**' ]
+    branches: [ main ]
+    paths:
+      - 'backend/api-gateway/**'
+      - '.github/workflows/deploy-api-gateway.yml'
+  workflow_dispatch:
 
 jobs:
   deploy:
