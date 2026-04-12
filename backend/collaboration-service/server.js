@@ -21,6 +21,10 @@ app.get('/collab/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
