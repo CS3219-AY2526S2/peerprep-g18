@@ -2,6 +2,9 @@ from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
 import httpx
+import firebase_admin
+import firebase_admin.auth
+import firebase_admin.credentials
 
 # Mocking external dependencies BEFORE importing the app
 mock_redis = MagicMock()
