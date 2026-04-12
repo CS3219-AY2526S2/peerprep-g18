@@ -94,9 +94,9 @@ resource "aws_security_group" "ecs_node_sg" {
   }
 }
 
-# 4. Get the latest ECS-optimized AMI for ARM64 (Graviton)
+# 4. Get the latest ECS-optimized AMI for x86_64
 data "aws_ssm_parameter" "ecs_ami" {
-  name = "/aws/service/ecs/optimized-ami/amazon-linux-2/arm64/recommended/image_id"
+  name = "/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id"
 }
 
 # 5. ECS Cluster
@@ -109,11 +109,11 @@ resource "aws_ecs_cluster" "main" {
   }
 }
 
-# 6. EC2 Launch Template (t4g.small host)
+# 6. EC2 Launch Template (t3.small host)
 resource "aws_launch_template" "ecs_host" {
   name_prefix   = "peerprep-ecs-host-"
   image_id      = data.aws_ssm_parameter.ecs_ami.value
-  instance_type = "t4g.small" # Cost-effective Graviton2 instance
+  instance_type = "t3.small" # Cost-effective x86_64 instance
 
   iam_instance_profile {
     name = aws_iam_instance_profile.ecs_instance_profile.name
@@ -219,6 +219,7 @@ resource "aws_ecs_task_definition" "services" {
       { name = "REDIS_PORT", value = "6379" },
       { name = "REDIS_SESSIONS_HOST", value = aws_elasticache_cluster.redis.cache_nodes[0].address },
       { name = "REDIS_PUBSUB_HOST", value = aws_elasticache_cluster.redis.cache_nodes[0].address },
+      { name = "REDIS_MATCH_HOST", value = aws_elasticache_cluster.redis.cache_nodes[0].address },
       { name = "QUESTION_SERVICE_URL", value = aws_lambda_function_url.internal_service_urls["question-service"].function_url },
       { name = "HISTORY_SERVICE_URL", value = aws_lambda_function_url.internal_service_urls["history-service"].function_url },
       { name = "AI_SERVICE_URL", value = aws_lambda_function_url.internal_service_urls["ai-service"].function_url }
