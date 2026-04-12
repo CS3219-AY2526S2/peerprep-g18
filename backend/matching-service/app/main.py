@@ -11,7 +11,7 @@ app = FastAPI(title="PeerPrep Matching Service")
 
 worker_task = None
 
-app.include_router(match.router, prefix="/matching")
+app.include_router(match.router)
 
 @app.on_event("startup")
 async def startup_event():

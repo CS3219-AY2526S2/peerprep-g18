@@ -131,13 +131,13 @@ resource "aws_launch_template" "ecs_host" {
   )
 }
 
-# 7. Auto Scaling Group (Single node for dev)
+# 7. Auto Scaling Group (Scale to 2 nodes to provide enough ENIs for all services)
 resource "aws_autoscaling_group" "ecs_asg" {
   name                = "peerprep-ecs-asg"
   vpc_zone_identifier = module.vpc.private_subnets
-  min_size            = 1
-  max_size            = 1
-  desired_capacity    = 1
+  min_size            = 2
+  max_size            = 2
+  desired_capacity    = 2
 
   launch_template {
     id      = aws_launch_template.ecs_host.id
