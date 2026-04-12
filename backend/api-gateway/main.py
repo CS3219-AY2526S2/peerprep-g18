@@ -131,6 +131,8 @@ async def verify_token(request: Request):
         raise HTTPException(status_code=401, detail="Missing Header")
 
     token = auth_header.split(" ")[1]
+    if not token or token.lower() == "null":
+        raise HTTPException(status_code=401, detail="Invalid Token")
 
     try:
         decoded_token = auth.verify_id_token(token, clock_skew_seconds=30)
