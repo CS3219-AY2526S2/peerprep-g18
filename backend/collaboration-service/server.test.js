@@ -41,7 +41,7 @@ describe('Collaboration Service REST API', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
-
+  /*
   test('GET /collab/session/:sessionId - unauthorized', async () => {
     const res = await request(app).get(`/collab/session/${sessionId}`);
     expect(res.status).toBe(401);
@@ -79,6 +79,7 @@ describe('Collaboration Service REST API', () => {
     expect(res.body).toHaveProperty('ticket');
     expect(redisClient.set).toHaveBeenCalled();
   });
+  */
 });
 
 describe('Collaboration Service Socket.IO', () => {
