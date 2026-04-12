@@ -30,9 +30,17 @@ These costs are incurred as long as the infrastructure is provisioned. Note the 
     *   **Instance Type**: 1x `t4g.small` (2 vCPU, 2 GB RAM).
     *   **Monthly Cost**: **~$15.48 / month** ($0.0212/hr).
 
+### Content Delivery (CloudFront - Price Class 200)
+For Singapore and Southeast Asia, **Price Class 200** is required for optimal performance.
+*   **Data Transfer Out (DTO)**: **$0.120 per GB** (First 10 TB/month).
+*   **HTTPS Requests**: **$0.0120 per 10,000 requests**.
+*   **HTTP Requests**: **$0.0090 per 10,000 requests**.
+*   **Free Tier Benefit**: 1 TB of DTO and 10M requests are free every month (Always Free).
+
+> **2026 Pro Plan Option**: For $15/mo (Flat-Rate), CloudFront now offers a **Pro Plan** that includes 50 TB of DTO, 10M requests, and bundled AWS WAF/logging. This is highly recommended for Singapore-based production sites to cap costs and include security.
+
 ### Networking & API
 *   **HTTP API (API Gateway)**: $1.00 per 1M requests.
-*   **CloudFront Data Transfer**: ~$0.12 per GB (Asia Pacific).
 *   **NAT Gateway Data Processing**: $0.059 per GB.
 
 ### Storage
@@ -45,5 +53,6 @@ These costs are incurred as long as the infrastructure is provisioned. Note the 
 
 1.  **Valkey Engine**: Using the Valkey engine for ElastiCache provides the best price-performance in 2026.
 2.  **Graviton2 (ARM)**: Using `t4g` instances and ARM-based Lambda functions saves ~20% compared to x86.
-3.  **Single NAT Gateway**: Essential for dev, as multi-AZ would double the ~$43/mo baseline.
-4.  **VPC Endpoints**: (Recommended) Implementing VPC Endpoints for S3/Firestore can bypass NAT processing fees.
+3.  **CloudFront Price Class 200**: Correctly balanced for the Singapore audience. We avoid the expensive "Price Class All" (South America/Australia) while ensuring local latency is minimal.
+4.  **Single NAT Gateway**: Essential for dev, as multi-AZ would double the ~$43/mo baseline.
+5.  **VPC Endpoints**: (Recommended) Implementing VPC Endpoints for S3/Firestore can bypass NAT processing fees.

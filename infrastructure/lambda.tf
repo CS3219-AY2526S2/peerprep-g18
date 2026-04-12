@@ -46,7 +46,10 @@ resource "aws_apigatewayv2_api" "http_api" {
   name          = "peerprep-api"
   protocol_type = "HTTP"
   cors_configuration {
-    allow_origins = ["*"] # Adjust this later for security
+    allow_origins = [
+      var.frontend_url == "*" ? "*" : var.frontend_url,
+      "http://localhost:5173"
+    ]
     allow_methods = ["*"]
     allow_headers = ["*"]
   }
@@ -88,14 +91,14 @@ resource "aws_lambda_function" "services" {
 
   environment {
     variables = {
-      REDIS_HOST = aws_elasticache_cluster.redis.cache_nodes[0].address
-      REDIS_PORT = "6379"
-      # Other secrets are pulled from Secrets Manager inside the app logic
+      REDIS_HOST   = aws_elasticache_cluster.redis.cache_nodes[0].address
+      REDIS_PORT   = "6379"
+      FRONTEND_URL = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}" # Placeholder; managed by CI/CD
     }
   }
 
   lifecycle {
-    ignore_changes = [image_uri] # Let CI/CD manage the image updates
+    ignore_changes = [image_uri, environment] # Let CI/CD manage both images and env vars
   }
 }
 

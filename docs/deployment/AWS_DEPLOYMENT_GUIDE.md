@@ -28,14 +28,14 @@ We will organize our infrastructure configuration in an `infrastructure/` folder
     - On Windows: `choco install terraform`
 2.  Install the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and configure it (`aws configure`).
 
-### Step 2.1: Base Networking (VPC & Subnets)
-This step builds the networking backbone in the **Singapore (`ap-southeast-1`)** region. We use 2 Availability Zones (AZs) for high availability.
+### Step 2.1: Base Networking & Variables
+This step builds the networking backbone in the **Singapore (`ap-southeast-1`)** region.
 
 #### A. Folder Structure
 Create an `infrastructure/` directory at the project root to house your Terraform files.
 
 #### B. Provider Configuration (`infrastructure/provider.tf`)
-Tells Terraform to use the AWS provider and target the correct region.
+Tells Terraform to use the AWS provider and target the correct region using a variable.
 ```hcl
 terraform {
   required_providers {
@@ -47,11 +47,27 @@ terraform {
 }
 
 provider "aws" {
-  region = "ap-southeast-1"
+  region = var.region
 }
 ```
 
-#### C. VPC Definition (`infrastructure/vpc.tf`)
+#### C. Variables Definition (`infrastructure/variables.tf`)
+Defines inputs that allow CI/CD to inject configuration (like the Frontend URL) dynamically.
+```hcl
+variable "frontend_url" {
+  description = "The URL of the deployed frontend (e.g., CloudFront URL)"
+  type        = string
+  default     = "*" # Default to * for initial bootstrap, managed by CI/CD later
+}
+
+variable "region" {
+  description = "AWS Region"
+  type        = string
+  default     = "ap-southeast-1"
+}
+```
+
+#### D. VPC Definition (`infrastructure/vpc.tf`)
 Using the official `terraform-aws-modules/vpc/aws` module, we define:
 *   **Public Subnets (x2):** For the Application Load Balancer (ALB).
 *   **Private Subnets (x2):** For ECS Tasks, Lambdas, and Redis.
@@ -87,17 +103,11 @@ module "vpc" {
 }
 ```
 
-#### D. Execution
-Run these commands in the `infrastructure/` directory to build your network foundation:
-1.  **`terraform init`**: **Prepares the environment.** It downloads the necessary AWS plugins (providers) and the community VPC module defined in your code.
-2.  **`terraform plan`**: **The "Safety Check".** This compares your code against what is actually in AWS and shows you a line-by-line preview of the VPC, Subnets, and NAT Gateway to be created. **It makes no changes to AWS yet.**
-3.  **`terraform apply`**: **The "Action Step".** After reviewing the plan, this command sends the instructions to AWS to build your network. You will be asked to type `yes` to confirm.
-
-### Step 2.2: Secrets Management (Firebase & Environment Variables)
+### Step 2.2: Secrets Management
 To avoid hardcoding sensitive information like Firebase Service Account JSONs or SMTP passwords, we use **AWS Secrets Manager**. 
 
 #### A. Secrets Definition (`infrastructure/secrets.tf`)
-Create "containers" for your secrets. We create three for the different Firebase projects and one for general Backend environment variables.
+Create "containers" for your secrets. Here, we create three for the different Firebase projects and one for general Backend environment variables.
 
 ```hcl
 # 1. Main Firebase Service Account (Used by API Gateway for JWT verification & User Service)
@@ -156,9 +166,7 @@ resource "aws_iam_policy" "secrets_read_policy" {
 ```
 
 #### C. Execution
-Run these commands in the `infrastructure/` directory to build your secrets vault:
-1.  **`terraform plan`**: **The Safety Check.** This verifies that your IAM policy syntax is correct and previews the creation of your two secret containers.
-2.  **`terraform apply`**: **The Action Step.** This provisions the secret entries in AWS Secrets Manager. Note: The secrets will be empty until you perform the manual step below.
+Run `terraform init`, `terraform plan`, and `terraform apply` to provision the containers. Upload your JSON files manually via the AWS Console as described in the Manual Step of the guide below.
 
 #### D. Manual Step: Uploading the JSON
 Terraform only creates the *empty* secret. You must manually upload your Firebase JSON content once:
@@ -236,10 +244,7 @@ output "redis_endpoint" {
 }
 ```
 
-#### B. Execution
-Run these commands in the `infrastructure/` directory to build your cache engine:
-1.  **`terraform plan`**: **The Safety Check.** This verifies the security group rules and previews the creation of the Redis cluster and its subnet group.
-2.  **`terraform apply`**: **The Action Step.** This provisions the Redis node. Note: Redis can take 5-10 minutes to become "Available" in the AWS Console.
+---
 
 ### Step 2.4: Elastic Container Registry (ECR)
 Before we can deploy our services, we need a place to store our Docker images. We use **Amazon ECR**, a fully managed Docker container registry. We will create one private repository for each of our 7 microservices.
@@ -352,7 +357,151 @@ If you need to push a single service manually (e.g., `api-gateway`):
 
 *Note: In production, this is handled by the GitHub Actions pipeline (Step 3), but the first push is often done manually to "bootstrap" the infrastructure.*
 
-### Step 2.5: Backend Compute Deployments
+---
+
+### Step 2.5: Frontend (S3 + CloudFront)
+We deploy the frontend first to generate the **CloudFront URL**, which is required to secure our Backend CORS.
+
+#### A. Frontend Configuration (`infrastructure/frontend.tf`)
+```hcl
+# 1. S3 Bucket for Frontend Assets
+resource "aws_s3_bucket" "frontend_bucket" {
+  bucket        = "peerprep-frontend-<AWS_ACCOUNT_ID>"  # Replace with your AWS_ACCOUNT_ID
+  force_destroy = true                                  # Allows deletion of bucket even if it contains files
+
+  tags = {
+    Name = "PeerPrepFrontendBucket"
+  }
+}
+
+# 2. Block Public Access to S3
+resource "aws_s3_bucket_public_access_block" "frontend_bucket_block" {
+  bucket = aws_s3_bucket.frontend_bucket.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# 3. CloudFront Origin Access Control (OAC)
+resource "aws_cloudfront_origin_access_control" "frontend_oac" {
+  name                              = "peerprep-frontend-oac"
+  description                       = "OAC for PeerPrep Frontend S3 Bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# 4. CloudFront Distribution
+resource "aws_cloudfront_distribution" "frontend_distribution" {
+  origin {
+    domain_name              = aws_s3_bucket.frontend_bucket.bucket_regional_domain_name
+    origin_id                = "S3-PeerPrepFrontend"
+    origin_access_control_id = aws_cloudfront_origin_access_control.frontend_oac.id
+  }
+
+  enabled             = true
+  is_ipv6_enabled     = true
+  default_root_object = "index.html"
+
+  # Price Class 200 (Includes Singapore, Japan, Hong Kong, etc.)
+  price_class = "PriceClass_200"
+
+  default_cache_behavior {
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "S3-PeerPrepFrontend"
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 3600
+    max_ttl                = 86400
+  }
+
+  # SPA Routing: Redirect 403 and 404 errors to index.html
+  custom_error_response {
+    error_code            = 403
+    response_code         = 200
+    response_page_path    = "/index.html"
+    error_caching_min_ttl = 10
+  }
+
+  custom_error_response {
+    error_code            = 404
+    response_code         = 200
+    response_page_path    = "/index.html"
+    error_caching_min_ttl = 10
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  tags = {
+    Name = "PeerPrepFrontendDistribution"
+  }
+}
+
+# 5. S3 Bucket Policy to allow CloudFront OAC access
+resource "aws_s3_bucket_policy" "frontend_bucket_policy" {
+  bucket = aws_s3_bucket.frontend_bucket.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action   = "s3:GetObject"
+        Effect   = "Allow"
+        Resource = "${aws_s3_bucket.frontend_bucket.arn}/*"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.frontend_distribution.arn
+          }
+        }
+      }
+    ]
+  })
+}
+
+# 6. Outputs
+output "frontend_s3_bucket_name" {
+  value       = aws_s3_bucket.frontend_bucket.id
+  description = "The name of the S3 bucket hosting the frontend"
+}
+
+output "frontend_cloudfront_url" {
+  value       = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}"
+  description = "The URL of the CloudFront distribution"
+}
+
+output "frontend_cloudfront_distribution_id" {
+  value       = aws_cloudfront_distribution.frontend_distribution.id
+  description = "The ID of the CloudFront distribution (used for invalidations)"
+}
+```
+
+#### B. Execution
+Run `terraform apply`. Once complete, take note of the `frontend_cloudfront_url` output. You will use this in the next step.
+
+---
+
+### Step 2.6: Backend Compute Deployments
 This step provisions the actual computing resources for your 7 microservices. We use a hybrid approach: **AWS Lambda** for stateless services and **AWS ECS (on EC2)** for stateful services.
 
 #### A. Application Load Balancer (`infrastructure/alb.tf`)
@@ -374,13 +523,31 @@ Stateless services (User, Question, History, AI, and API Gateway) are deployed a
       name          = "peerprep-api"
       protocol_type = "HTTP"
       cors_configuration {
-        allow_origins = ["*"] # Adjust this later for security
+        allow_origins = [
+          var.frontend_url == "*" ? "*" : var.frontend_url,
+          "http://localhost:5173"
+        ]
         allow_methods = ["*"]
         allow_headers = ["*"]
       }
     }
+
+    # ...
+
+    resource "aws_lambda_function" "services" {
+      # ... (other config)
+      environment {
+        variables = {
+          REDIS_HOST   = aws_elasticache_cluster.redis.cache_nodes[0].address
+          FRONTEND_URL = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}" # Placeholder; managed by CI/CD
+        }
+      }
+
+      lifecycle {
+        ignore_changes = [image_uri, environment] # Let CI/CD manage both images and env vars
+      }
+    }
     ```
-    > **Note on CORS Security**: We are currently allowing all origins (`*`) to prevent blocking the frontend during initial setup. Since the CloudFront URL (the "Frontend address") is generated later in the process, we use this permissive setting to ensure connectivity. We will restrict this to the specific CloudFront domain once it is provisioned.
 
 #### C. ECS on EC2 (`infrastructure/ecs.tf`)
 Stateful services (Matching, Collaboration) run as long-lived containers on a managed EC2 host.
@@ -399,16 +566,23 @@ All compute resources defined in this step (both Lambda and ECS) pull their runt
 * **Immutable Tags**: While we use `:latest` for initial bootstrapping, our CI/CD pipeline (Step 3) uses unique commit SHAs to ensure deployments are traceable and rollbacks are reliable.
 
 #### E. Execution
-1.  **`terraform plan`**: Review the creation of IAM roles, the ALB, 5 Lambda functions, and the ECS cluster.
-2.  **`terraform apply`**: Provision the compute layer.
-    - **CRITICAL ECR DEPENDENCY**: This step will **FAIL** if any of the 7 ECR repositories created in Step 2.4 are empty.
-    - **Why?**: AWS Lambda and ECS require a valid image manifest to exist at the specified URI during resource creation. Terraform cannot "placeholder" these images.
-    - **Solution**: Ensure you have completed **Step 2.4.1** (Initial Docker Image Upload) for all 7 services before running this command.
+At this stage, your infrastructure code is complete. You have defined the networking (VPC), security (Secrets), caching (Redis), storage (ECR & S3), delivery (CloudFront), and compute (ALB, Lambda, ECS) layers. 
 
+**This is the most critical point to run a final, comprehensive `terraform apply`.**
 
-### Step 2.6: Frontend (S3 + CloudFront)
-*   **S3 Bucket:** Hosts the compiled React build (`dist/`). Configured to block all public access.
-*   **CloudFront Distribution:** Acts as a CDN. Uses **Origin Access Control (OAC)** to securely read files from the S3 bucket and serve them globally over HTTPS via an AWS CloudFront URL (e.g., `https://d12345.cloudfront.net`).
+Running `terraform apply` now accomplishes the following:
+1.  **Finalizes the Backbone**: It connects your compute resources (Lambda/ECS) to the VPC and Redis cluster.
+2.  **Activates the Entry Points**: It provisions the Application Load Balancer (ALB) and the HTTP API Gateway, giving your backend its public-facing URLs.
+3.  **Locks in the Environment**: It maps the CloudFront URL to the backend's CORS configuration and environment variables.
+
+**What to Verify After Apply:**
+*   **ALB DNS Name**: Check the Terraform output for the `alb_dns_name`. You should be able to reach the load balancer (though it may return a 503 until the ECS tasks are fully healthy).
+*   **Lambda Console**: Verify that all 5 stateless services (API Gateway, User, Question, History, AI) appear in the AWS Lambda console with the correct "Image" package type.
+*   **ECS Cluster**: In the ECS console, ensure the `peerprep-cluster` is active and that the `matching-service` and `collaboration-service` are attempting to start tasks on your EC2 instance.
+*   **CloudFront URL**: Open the `frontend_cloudfront_url`. While the frontend assets aren't uploaded yet, you should see a CloudFront-branded 403 or 404 error, confirming the distribution is live.
+
+**Transitioning to CI/CD:**
+Once this manual "bootstrap" apply is successful and the infrastructure is "standing," you have a stable foundation. You are now ready to move away from manual commands and integrate **GitHub Actions** (Step 3) to handle the automated building, tagging, and deployment of your code updates.
 
 ---
 
