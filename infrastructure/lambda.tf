@@ -20,6 +20,38 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+# Attach basic execution policy for CloudWatch Logs
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Add ECR read permissions (Required for container-based Lambdas)
+resource "aws_iam_role_policy" "lambda_ecr_read" {
+  name = "peerprep-lambda-ecr-read"
+  role = aws_iam_role.lambda_exec_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:BatchCheckLayerAvailability"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+      {
+        Action = "ecr:GetAuthorizationToken"
+        Effect = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # Attach our custom Secrets Manager read policy
 resource "aws_iam_role_policy_attachment" "lambda_secrets_read" {
   role       = aws_iam_role.lambda_exec_role.name
@@ -51,7 +83,8 @@ resource "aws_apigatewayv2_api" "http_api" {
       "http://localhost:5173"
     ]
     allow_methods = ["*"]
-    allow_headers = ["*"]
+    allow_headers = ["content-type", "authorization", "x-amz-date", "x-api-key", "x-amz-security-token"]
+    max_age       = 300
   }
 }
 
@@ -168,12 +201,13 @@ resource "aws_apigatewayv2_integration" "gateway_integration" {
   integration_type   = "AWS_PROXY"
   integration_method = "POST"
   integration_uri    = aws_lambda_function.api_gateway.invoke_arn
+  payload_format_version = "2.0"
 }
 
 # Route EVERYTHING to the API Gateway Lambda
 resource "aws_apigatewayv2_route" "catch_all" {
   api_id    = aws_apigatewayv2_api.http_api.id
-  route_key = "ANY /{proxy+}"
+  route_key = "$default"
   target    = "integrations/${aws_apigatewayv2_integration.gateway_integration.id}"
 }
 
@@ -184,6 +218,41 @@ resource "aws_lambda_permission" "api_gw_to_gateway" {
   function_name = aws_lambda_function.api_gateway.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+# --- MISSING PERMISSIONS FOR FUNCTION URLs ---
+# These are required because the internal services are called via Function URLs with Auth: NONE
+# AWS requires BOTH lambda:InvokeFunctionUrl and lambda:InvokeFunction for public access to work correctly.
+resource "aws_lambda_permission" "allow_internal_service_invoke_url" {
+  for_each               = local.internal_lambda_services
+  statement_id           = "AllowFunctionUrlInvokeAll-${each.key}"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.internal_services[each.key].function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "allow_internal_service_invoke_function" {
+  for_each               = local.internal_lambda_services
+  statement_id           = "AllowFunctionInvokeAll-${each.key}"
+  action                 = "lambda:InvokeFunction"
+  function_name          = aws_lambda_function.internal_services[each.key].function_name
+  principal              = "*"
+}
+
+resource "aws_lambda_permission" "allow_api_gateway_url_invoke_url" {
+  statement_id           = "AllowFunctionUrlInvokeAll-gateway"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.api_gateway.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "allow_api_gateway_url_invoke_function" {
+  statement_id           = "AllowFunctionInvokeAll-gateway"
+  action                 = "lambda:InvokeFunction"
+  function_name          = aws_lambda_function.api_gateway.function_name
+  principal              = "*"
 }
 
 # 5. Output API Gateway URL

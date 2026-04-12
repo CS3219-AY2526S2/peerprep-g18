@@ -528,19 +528,40 @@ Stateless services (User, Question, History, AI, and API Gateway) are deployed a
           "http://localhost:5173"
         ]
         allow_methods = ["*"]
-        allow_headers = ["*"]
+        # Explicit headers are required to prevent Cross-Origin Request Warning
+        allow_headers = ["content-type", "authorization", "x-amz-date", "x-api-key", "x-amz-security-token"]
+        max_age       = 300
       }
     }
 
-    # ...
+    # Integration must use Payload 2.0 for FastAPI/Mangum compatibility
+    resource "aws_apigatewayv2_integration" "gateway_integration" {
+      api_id           = aws_apigatewayv2_api.http_api.id
+      integration_type = "AWS_PROXY"
+      integration_uri  = aws_lambda_function.api_gateway.invoke_arn
+      payload_format_version = "2.0"
+    }
 
-    resource "aws_lambda_function" "services" {
-      # ... (other config)
-      lifecycle {
-        ignore_changes = [image_uri, environment] # Let CI/CD manage both images and env vars
-      }
+    # Use $default route to capture all traffic correctly
+    resource "aws_apigatewayv2_route" "catch_all" {
+      api_id    = aws_apigatewayv2_api.http_api.id
+      route_key = "$default"
+      target    = "integrations/${aws_apigatewayv2_integration.gateway_integration.id}"
     }
     ```
+
+*   **Function URL Permissions (The 403 Fix)**: When using Lambda Function URLs with `auth_type = "NONE"`, AWS requires **explicit** permissions for both `InvokeFunctionUrl` and `InvokeFunction` with a wildcard principal (`*`) for public access to work correctly. Without these, internal service-to-service calls via Function URLs will return a 403 Forbidden error.
+    ```hcl
+    resource "aws_lambda_permission" "allow_function_url" {
+      statement_id           = "AllowFunctionUrlInvoke"
+      action                 = "lambda:InvokeFunctionUrl"
+      function_name          = aws_lambda_function.my_service.function_name
+      principal              = "*"
+      function_url_auth_type = "NONE"
+    }
+    ```
+
+*   **ECR & Logging Permissions**: The Lambda execution role must include policies for CloudWatch Logs (`AWSLambdaBasicExecutionRole`) and specific ECR read permissions (`ecr:GetDownloadUrlForLayer`, `ecr:BatchGetImage`, etc.) to pull container images from private repositories.
 
 #### C. ECS on EC2 (`infrastructure/ecs.tf`)
 Stateful services (Matching, Collaboration) run as long-lived containers on a managed EC2 host.
