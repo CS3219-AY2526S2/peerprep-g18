@@ -12,4 +12,4 @@ async def health_check():
 app.include_router(history_router, prefix="/history", tags=["History"])
 
 from mangum import Mangum
-handler = Mangum(app, lifespan="off")
+handler = Mangum(app, lifespan="auto")

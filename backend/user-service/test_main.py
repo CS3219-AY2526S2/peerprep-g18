@@ -56,16 +56,18 @@ def test_get_user_success(client):
 
 def test_lookup_username_not_found(client):
     """Test looking up a username that doesn't exist."""
-    mock_db.collection.return_value.stream.return_value = []
+    # Updated mock to use .where()
+    mock_db.collection.return_value.where.return_value.limit.return_value.get.return_value = []
     response = client.get("/users/lookup/nonexistent")
     assert response.status_code == 404
     assert response.json() == {"detail": "Username not found"}
 
 def test_lookup_username_success(client):
     """Test looking up a username successfully."""
+    # Updated mock to use .where()
     mock_user = MagicMock()
     mock_user.to_dict.return_value = {"username": "TestUser", "email": "test@example.com"}
-    mock_db.collection.return_value.stream.return_value = [mock_user]
+    mock_db.collection.return_value.where.return_value.limit.return_value.get.return_value = [mock_user]
     
     response = client.get("/users/lookup/testuser")
     assert response.status_code == 200

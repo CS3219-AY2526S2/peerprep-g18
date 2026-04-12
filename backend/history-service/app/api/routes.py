@@ -13,7 +13,13 @@ from datetime import datetime, timezone
 import httpx
 
 
-http_client = httpx.AsyncClient()
+http_client: httpx.AsyncClient = None
+
+def get_http_client():
+    global http_client
+    if http_client is None or http_client.is_closed:
+        http_client = httpx.AsyncClient()
+    return http_client
 
 # A secure way to get the user-id, ensuring users dont forge this to access others history
 # This code is generated using gemini
@@ -45,7 +51,7 @@ async def save_history(payload: HistoryBase):
 
     try:
         
-        response = await http_client.get(
+        response = await get_http_client().get(
             url, 
             params=params,
             timeout=5.0

@@ -153,12 +153,10 @@ def create_user(user: UserCreate):
     users_ref = db.collection('Users')
     target_username = user.username.lower()
     
-    # Manual backend-side case-insensitive check
-    all_users = users_ref.stream()
-    for doc in all_users:
-        existing_user = doc.to_dict()
-        if existing_user.get('username', '').lower() == target_username:
-            raise HTTPException(status_code=400, detail="Username already exists")
+    # Optimized lookup using where filter
+    existing_user_query = users_ref.where("username", "==", user.username).limit(1).get()
+    if len(existing_user_query) > 0:
+        raise HTTPException(status_code=400, detail="Username already exists")
 
     try:
         user_record = auth.create_user(
@@ -208,11 +206,10 @@ def lookup_email_by_username(username: str):
     users_ref = db.collection('Users')
     target_username = username.lower()
     
-    all_users = users_ref.stream()
-    for doc in all_users:
-        user_data = doc.to_dict()
-        if user_data.get('username', '').lower() == target_username:
-            return {"email": user_data.get("email")}
+    # Optimized lookup using where filter
+    query = users_ref.where("username", "==", username).limit(1).get()
+    if len(query) > 0:
+        return {"email": query[0].to_dict().get("email")}
         
     raise HTTPException(status_code=404, detail="Username not found")
 
@@ -237,11 +234,10 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
         users_ref = db.collection('Users')
         target_username = update_data.username.lower()
         
-        # Manual backend-side check
-        all_users = users_ref.stream()
-        for u in all_users:
-            if u.id != user_id and u.to_dict().get('username', '').lower() == target_username:
-                raise HTTPException(status_code=400, detail="Username already exists")
+        # Optimized lookup using where filter
+        existing_user_query = users_ref.where("username", "==", update_data.username).limit(1).get()
+        if len(existing_user_query) > 0 and existing_user_query[0].id != user_id:
+            raise HTTPException(status_code=400, detail="Username already exists")
         
         update_dict['username'] = update_data.username
 
