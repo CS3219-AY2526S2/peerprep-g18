@@ -7,13 +7,17 @@ import httpx
 mock_redis = MagicMock()
 mock_http_client = AsyncMock()
 
-import firebase_admin.auth
+# This part is tricky because main.py does 'import firebase_admin' etc. at top level.
 with patch('firebase_admin.credentials.Certificate'), \
      patch('firebase_admin.initialize_app'), \
-     patch('firebase_admin.auth', spec=firebase_admin.auth), \
+     patch('firebase_admin.auth'), \
      patch('redis.asyncio.Redis', return_value=mock_redis), \
      patch('httpx.AsyncClient', return_value=mock_http_client):
+    import main
     from main import app
+
+# Force the global http_client in main to be our mock
+main.http_client = mock_http_client
 
 def test_gateway_service_not_found():
     """Test proxying to a non-existent service prefix."""
@@ -25,12 +29,16 @@ def test_gateway_service_not_found():
 @pytest.mark.asyncio
 async def test_gateway_proxy_public_route():
     """Test proxying a public route (no auth required)."""
+    # Use TestClient with a context manager or just rely on the manual mock we injected
     client = TestClient(app)
+    
     # Mocking the response from the target service
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.content = b'{"success": true}'
     mock_response.headers = {"Content-Type": "application/json"}
+    
+    # Ensure get_http_client() returns our mock, and our mock returns this response
     mock_http_client.request.return_value = mock_response
 
     # /users (POST) is a public route according to main.py
