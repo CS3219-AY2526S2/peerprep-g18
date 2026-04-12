@@ -243,6 +243,9 @@ resource "aws_ecs_service" "services" {
   task_definition = aws_ecs_task_definition.services[each.key].arn
   desired_count   = 1
   launch_type     = "EC2"
+  
+  # Allow 60s for service to pass health checks before giving up
+  health_check_grace_period_seconds = 60
 
   network_configuration {
     subnets         = module.vpc.private_subnets
