@@ -765,3 +765,24 @@ Unlike stateless services (Lambda), stateful services running on ECS (e.g., Matc
     CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}"]
     ```
 *   **Terraform Alignment:** Terraform (in `ecs.tf`) injects this `PORT` variable dynamically to match the ALB listener rules.
+
+### 5.5 Resource Naming & Prefixing
+To avoid naming collisions and ensure the CI/CD pipeline can find the correct resources, all AWS compute resources must follow the `peerprep-` prefix convention.
+
+*   **Lambda Functions:** Must be named `peerprep-<service-name>` (e.g., `peerprep-user-service`).
+*   **ECS Services/Tasks:** Must be named `peerprep-<service-name>` (e.g., `peerprep-matching-service`).
+*   **Impact:** The GitHub Actions deployment scripts explicitly target these prefixed names. Changing them in Terraform without updating the workflows will break the deployment.
+
+### 5.6 Image Tagging Policy
+Our ECR strategy uses a dual-tagging approach to balance Terraform stability with deployment traceability.
+
+1.  **`:latest` Tag:** Used by Terraform during the initial bootstrap (Phase 2). GitHub Actions also updates this tag on every push to ensure the registry always has a "current" version.
+2.  **`:<commit-sha>` Tag:** Used by GitHub Actions to perform immutable updates to Lambda and ECS. This allows for precise rollbacks and ensures that "what is in ECR" exactly matches "what is in Git."
+
+### 5.7 Frontend Connectivity (Dual-Entry Points)
+The frontend application communicates with the backend via two distinct entry points, depending on the service type:
+
+1.  **`GATEWAY_URL` (HTTP API Gateway):** Used for all stateless REST operations (User, Question, History, AI). Requests here are authenticated by the Gateway before being proxied.
+2.  **`ALB_URL` (Application Load Balancer):** Used for stateful services (Matching, Collaboration) and real-time WebSockets (`/socket.io/*`).
+    *   **WebSocket Pathing:** Frontend Socket.IO clients must point to `${ALB_URL}` with the `path: "/socket.io"` option.
+    *   **Security:** While the ALB is public, services behind it (like Collaboration) use ticket-based authentication (validated against Redis) for WebSocket handshakes.
