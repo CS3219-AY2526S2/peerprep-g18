@@ -78,10 +78,16 @@ http_client: httpx.AsyncClient = None
 redis_sessions: redis.Redis = None
 redis_auth: redis.Redis = None
 
+def get_http_client():
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient()
+    return http_client
+
 @app.on_event("startup")
 async def startup():
-    global redis_sessions, redis_auth, http_client
-    http_client = httpx.AsyncClient()
+    global redis_sessions, redis_auth
+    get_http_client()
 
     sessions_host = os.getenv("REDIS_SESSIONS_HOST", "redis-sessions")
     redis_sessions = redis.Redis(host=sessions_host, port=6379, decode_responses=True)
@@ -93,7 +99,8 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    await http_client.aclose()
+    if http_client:
+        await http_client.aclose()
     if redis_sessions:
         await redis_sessions.close()
     if redis_auth:
@@ -197,7 +204,7 @@ async def initialize_collab_session(request: Request):
         question_id = "1"
         try:
             target_question_service = os.getenv("QUESTION_SERVICE_URL", "http://question-service:6768").rstrip("/")
-            response = await http_client.get(
+            response = await get_http_client().get(
                 f"{target_question_service}/question/", 
                 params={"topic": topic, "difficulty": difficulty},
                 timeout=5.0
@@ -286,7 +293,7 @@ async def gateway_proxy(request: Request, path: str):
     body = await request.body()
 
     try:
-        target_response = await http_client.request(
+        target_response = await get_http_client().request(
             method=request.method,
             url=target_url,
             headers=forwarded_headers,
