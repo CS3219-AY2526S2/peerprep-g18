@@ -630,7 +630,7 @@ async function handleSessionEnded(sessionId) {
 // COLLAB REST ENDPOINTS (previously in api-gateway)
 // ==========================================
 
-app.get('/session/:sessionId', async (req, res) => {
+app.get('/collab/session/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
   const uid = req.headers['x-user-id'];
   if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
@@ -650,7 +650,7 @@ app.get('/session/:sessionId', async (req, res) => {
   res.json({ ...meta, sessionId });
 });
 
-app.get('/active-session', async (req, res) => {
+app.get('/collab/active-session', async (req, res) => {
   const uid = req.headers['x-user-id'];
   if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
 
@@ -665,7 +665,7 @@ app.get('/active-session', async (req, res) => {
   res.json({ sessionId });
 });
 
-app.post('/join', async (req, res) => {
+app.post('/collab/join', async (req, res) => {
   const uid = req.headers['x-user-id'];
   if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });
 
@@ -691,7 +691,7 @@ app.post('/join', async (req, res) => {
   res.json({ ticket });
 });
 
-app.post('/end-session/:sessionId', async (req, res) => {
+app.post('/collab/end-session/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
   const uid = req.headers['x-user-id'];
   if (!uid) return res.status(401).json({ detail: 'Missing X-User-Id header' });

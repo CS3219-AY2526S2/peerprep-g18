@@ -42,36 +42,36 @@ describe('Collaboration Service REST API', () => {
     jest.clearAllMocks();
   });
 
-  test('GET /session/:sessionId - unauthorized', async () => {
-    const res = await request(app).get(`/session/${sessionId}`);
+  test('GET /collab/session/:sessionId - unauthorized', async () => {
+    const res = await request(app).get(`/collab/session/${sessionId}`);
     expect(res.status).toBe(401);
   });
 
-  test('GET /session/:sessionId - not found', async () => {
+  test('GET /collab/session/:sessionId - not found', async () => {
     redisClient.get.mockResolvedValue(null);
     const res = await request(app)
-      .get(`/session/${sessionId}`)
+      .get(`/collab/session/${sessionId}`)
       .set('x-user-id', userId);
     expect(res.status).toBe(404);
   });
 
-  test('GET /active-session - no active session', async () => {
+  test('GET /collab/active-session - no active session', async () => {
     redisClient.get.mockResolvedValue(null);
     const res = await request(app)
-      .get('/active-session')
+      .get('/collab/active-session')
       .set('x-user-id', userId);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ sessionId: null });
   });
 
-  test('POST /join - success', async () => {
+  test('POST /collab/join - success', async () => {
     const meta = { user1_id: userId, user2_id: 'other', questionId: 'q1' };
     redisClient.get.mockImplementation((key) => {
       if (key.includes(':meta')) return Promise.resolve(JSON.stringify(meta));
       return Promise.resolve(null);
     });
     const res = await request(app)
-      .post('/join')
+      .post('/collab/join')
       .set('x-user-id', userId)
       .send({ sessionId });
     
