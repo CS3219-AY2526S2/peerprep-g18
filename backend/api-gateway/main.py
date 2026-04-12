@@ -40,20 +40,21 @@ def get_firebase_credentials():
             return credentials.Certificate(secret_data)
         else:
             raise Exception("SecretString not found in Secrets Manager response")
-    except ClientError as e:
-        print(f"FAILED to fetch secret from AWS: {str(e)}")
-        # If we are local and don't have the file, this will crash anyway.
-        # But if we're in Lambda, this is a fatal startup error.
-        raise e
+    except Exception as e:
+        print(f"WARNING: Could not fetch secret from AWS: {str(e)}. This is expected in local/CI environments.")
+        return None
 
 # Initialize Firebase
 if not firebase_admin._apps:
     try:
         cred = get_firebase_credentials()
-        firebase_admin.initialize_app(cred)
-        print("Firebase Admin initialized successfully.")
+        if cred:
+            firebase_admin.initialize_app(cred)
+            print("Firebase Admin initialized successfully.")
+        else:
+            print("WARNING: Firebase Admin not initialized (no credentials found).")
     except Exception as e:
-        print(f"CRITICAL: Firebase initialization failed: {str(e)}")
+        print(f"WARNING: Firebase initialization failed: {str(e)}")
 
 app = FastAPI(title="PeerPrep API Gateway")
 

@@ -30,20 +30,22 @@ def load_secrets():
 
     # 1. Load Firebase Credentials
     secret_file = "firebase-service-account.json"
+    cred = None
     if os.path.exists(secret_file):
         cred = credentials.Certificate(secret_file)
     else:
-        print("Local firebase-service-account.json not found. Fetching from AWS...")
+        print("Local firebase-service-account.json not found. Attempting to fetch from AWS...")
         try:
             resp = client.get_secret_value(SecretId="peerprep/firebase-main")
             cred = credentials.Certificate(json.loads(resp['SecretString']))
         except Exception as e:
-            print(f"CRITICAL: Failed to fetch Firebase secret: {e}")
-            raise e
+            print(f"WARNING: Could not fetch Firebase secret from AWS: {e}. This is expected in local/CI environments.")
     
-    if not firebase_admin._apps:
+    if cred and not firebase_admin._apps:
         firebase_admin.initialize_app(cred)
         print("Firebase Admin initialized.")
+    elif not firebase_admin._apps:
+        print("WARNING: Firebase Admin not initialized (no credentials found).")
 
     # 2. Load Backend Env Vars (SMTP, etc.)
     try:

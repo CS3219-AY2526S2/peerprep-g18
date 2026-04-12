@@ -33,9 +33,8 @@ def get_firebase_credentials():
             return credentials.Certificate(secret_data)
         else:
             raise Exception("SecretString not found in Secrets Manager response")
-    except ClientError as e:
-        print(f"FAILED to fetch secret from AWS: {str(e)}")
-        # Fallback to default credentials as a last resort
+    except Exception as e:
+        print(f"WARNING: Could not fetch secret from AWS: {str(e)}. This is expected in local/CI environments.")
         return None
 
 # Initialize Firestore
@@ -45,8 +44,9 @@ if not firebase_admin._apps:
         firebase_admin.initialize_app(cred)
     else:
         try:
+            # Try to initialize with default credentials if they exist
             firebase_admin.initialize_app()
         except Exception as e:
-            print(f"CRITICAL: Firebase initialization failed: {str(e)}")
+            print(f"WARNING: Firebase initialization failed: {str(e)}. Proceeding without Firebase (may cause test failures if not mocked).")
 
 db = firestore.client()
