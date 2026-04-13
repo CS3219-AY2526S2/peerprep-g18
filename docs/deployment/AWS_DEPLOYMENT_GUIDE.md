@@ -506,8 +506,9 @@ This step provisions the actual computing resources for your 7 microservices. We
 
 #### A. Application Load Balancer (`infrastructure/alb.tf`)
 The ALB is our primary entry point for stateful traffic and sits in the **Public Subnets**.
-*   **Path-Based Routing**: To minimize costs, we use a single ALB and route traffic based on URL paths (e.g., `/matching/*` and `/collaboration/*`) to different **Target Groups**.
+*   **Path-Based Routing**: To minimize costs, we use a single ALB and route traffic based on URL paths (e.g., `/matching/*` and `/collab/*`) to different **Target Groups**.
 *   **WebSocket Support**: We've ensured the listener supports long-lived TCP connections, which are critical for real-time synchronization in the Collaboration service.
+*   **Health Check**: The Collaboration service health check targets `GET /collab/health` with `matcher = "200"`. A strict `200`-only matcher ensures the ALB only marks the service healthy when the Express server is fully initialised, not during startup or restart.
 
 #### B. Lambda Services (`infrastructure/lambda.tf`)
 Stateless services (User, Question, History, AI, and API Gateway) are deployed as Lambdas for maximum cost-efficiency, while ensuring future scalability by leveraging Lambda's native ability to scale to thousands of concurrent executions in seconds without manual server management.
@@ -760,6 +761,22 @@ handler = Mangum(app, lifespan="off")
 ```
 This allows the same codebase to run as a server locally and as a function in AWS.
 
+#### api-gateway: Path Prefix Stripping
+The API Gateway Lambda receives requests from CloudFront with the full path, e.g. `/api/users/123`. The `api_gateway_base_path` option instructs Mangum to strip the `/api` prefix before FastAPI processes the request — matching the behaviour of Nginx locally (which strips `/api/` before forwarding to the api-gateway container):
+```python
+# backend/api-gateway/main.py
+handler = Mangum(app, lifespan="off", api_gateway_base_path="/api")
+```
+This parameter has **no effect** when running locally via `uvicorn` (Nginx handles prefix stripping there), so the same code works in both environments.
+
+#### Lifespan and Cold Start
+All Lambda services use `lifespan="off"`. This prevents Mangum from triggering FastAPI's startup/shutdown lifecycle events on every Lambda invocation:
+*   With `lifespan="auto"`, Mangum calls `startup` and `shutdown` on every invoke. If `shutdown` closes Redis or HTTP connections, the next warm invocation must re-open them — adding 200–500 ms per request.
+*   With `lifespan="off"`, connections are initialised lazily on first use and reused across warm invocations, because Lambda execution environments persist between requests.
+*   The api-gateway uses lazy getter functions (`get_redis_sessions()`, `get_redis_auth()`) rather than `@app.on_event("startup")` to initialise Redis, so connections survive across warm Lambda invocations.
+
+> **Note on VPC cold starts:** Lambda functions inside a VPC (private subnets) inherently have a longer cold start (~1–2 s) compared to functions outside a VPC. This is unavoidable without **Provisioned Concurrency** (which keeps execution environments pre-warmed at additional cost).
+
 ### 5.2 Container Entry Points
 Our Dockerfiles use `awslambdaric` (the Lambda Runtime Interface Client) as the default entry point.
 *   **Production (AWS):** The Lambda runtime calls `python -m awslambdaric main.handler`.
@@ -776,6 +793,22 @@ To maintain security and ensure the code works in both Local Development and AWS
 
 This architecture ensures that **no internal microservice is exposed to the public internet** except through the authenticated Gateway, while allowing the codebase to remain environment-agnostic.
 
+#### Cross-Service URL Injection for Internal Lambdas
+Because Lambda Function URLs are only known *after* the Lambda functions are created, we cannot reference them in the same `for_each` resource block without creating a circular dependency. The `history-service` Lambda needs `QUESTION_SERVICE_URL` to enrich history records with question metadata.
+
+We solve this with a `terraform_data` resource that runs a `local-exec` provisioner *after* all Function URLs are created:
+```hcl
+resource "terraform_data" "history_service_env_update" {
+  triggers_replace = [
+    aws_lambda_function_url.internal_service_urls["question-service"].function_url,
+  ]
+  provisioner "local-exec" {
+    command = "aws lambda update-function-configuration --function-name peerprep-history-service --environment ..."
+  }
+}
+```
+This runs automatically during `terraform apply` whenever the question-service Function URL changes.
+
 ### 5.4 Stateful Service Port Management (ECS)
 Unlike stateless services (Lambda), stateful services running on ECS (e.g., Matching, Collaboration) must listen on a specific port that matches the **Container Port** defined in `ecs.tf`.
 
@@ -786,6 +819,29 @@ Unlike stateless services (Lambda), stateful services running on ECS (e.g., Matc
     CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}"]
     ```
 *   **Terraform Alignment:** Terraform (in `ecs.tf`) injects this `PORT` variable dynamically to match the ALB listener rules.
+
+#### Port Reference Table
+
+| Service | Local Port | `docker-compose` expose | ECS Container Port | Deployed As |
+|---|---|---|---|---|
+| api-gateway | 1234 | 1234 | N/A | Lambda |
+| user-service | 6767 | 6767 | N/A | Lambda |
+| question-service | 6768 | 6768 | N/A | Lambda |
+| history-service | 6770 | 6770 | N/A | Lambda |
+| ai-service | 6771 | 6771 | N/A | Lambda |
+| matching-service | 8001 | 8001 | 8001 | ECS |
+| collaboration-service | 4000 | 4000 | 3001 (via `PORT` env) | ECS |
+
+> **Note on collaboration-service ports:** The Dockerfile `ENV PORT=4000` sets the local default. ECS overrides this to `3001` via the `PORT` environment variable in `ecs.tf`, which matches the ALB Target Group's container port.
+
+#### URL Routing Summary
+
+| Frontend Call | Local Path | AWS Path |
+|---|---|---|
+| REST API | `/api/X` → Nginx strips `/api/` → api-gateway:1234 | `/api/X` → CloudFront `/api/*` → HTTP API GW → api-gateway Lambda (Mangum strips `/api`) → upstream Lambda/ALB |
+| WebSocket | `http://localhost/socket.io/` → Nginx → collab:4000 | CloudFront `/socket.io/*` → ALB → collab ECS:3001 |
+| Collab REST | `/api/collab/X` → api-gateway → `http://collab-service:4000/collab/X` | api-gateway Lambda → `http://ALB/collab/X` → ALB → collab ECS:3001 |
+| Matching REST | `/api/matching/X` → api-gateway → `http://matching-service:8001/matching/X` | api-gateway Lambda → `http://ALB/matching/X` → ALB → matching ECS:8001 |
 
 ### 5.5 Resource Naming & Prefixing
 To avoid naming collisions and ensure the CI/CD pipeline can find the correct resources, all AWS compute resources must follow the `peerprep-` prefix convention.
@@ -803,7 +859,28 @@ Our ECR strategy uses a dual-tagging approach to balance Terraform stability wit
 ### 5.7 Frontend Connectivity (Dual-Entry Points)
 The frontend application communicates with the backend via two distinct entry points, depending on the service type:
 
-1.  **`GATEWAY_URL` (HTTP API Gateway):** Used for all stateless REST operations (User, Question, History, AI). Requests here are authenticated by the Gateway before being proxied.
-2.  **`ALB_URL` (Application Load Balancer):** Used for stateful services (Matching, Collaboration) and real-time WebSockets (`/socket.io/*`).
-    *   **WebSocket Pathing:** Frontend Socket.IO clients must point to `${ALB_URL}` with the `path: "/socket.io"` option.
+1.  **`GATEWAY_URL` (HTTP API Gateway):** Used for all stateless REST operations (User, Question, History, AI). Requests here are authenticated by the Gateway before being proxied. All REST API calls are prefixed with `/api` (e.g. `GATEWAY_URL/users/...`), which CloudFront routes to the HTTP API Gateway.
+2.  **`ALB_URL` (Application Load Balancer / Nginx):** Used for stateful service WebSockets (`/socket.io/*`) and Collaboration REST endpoints (`/collab/*`).
+    *   **WebSocket Pathing:** Frontend Socket.IO clients connect to `${ALB_URL}` with `path: '/socket.io'`. In production this is the CloudFront distribution URL (which forwards `/socket.io/*` to the ALB); locally it is `http://localhost` (Nginx).
     *   **Security:** While the ALB is public, services behind it (like Collaboration) use ticket-based authentication (validated against Redis) for WebSocket handshakes.
+
+#### Local Development Setup
+Create `frontend/.env.development` (already committed to the repository) with:
+```
+VITE_GATEWAY_URL=http://localhost/api
+VITE_ALB_URL=http://localhost
+```
+This file is picked up automatically by Vite when running `npm run dev`. It points both the REST gateway and the WebSocket connection to the local Nginx reverse proxy on port 80, which in turn routes:
+*   `/api/*` → `api-gateway:1234`
+*   `/socket.io/*` → `collab-service:4000`
+
+Without `VITE_ALB_URL=http://localhost`, Vite's dev server (`localhost:5173`) would be used as the WebSocket origin, which has no `/socket.io/` proxy configured and causes all socket connections to fail.
+
+#### Production (AWS) Configuration
+In the `deploy-frontend.yml` GitHub Actions workflow, the build step injects:
+```yaml
+env:
+  VITE_GATEWAY_URL: "/api"
+  VITE_ALB_URL: ""
+```
+`VITE_ALB_URL=""` means Socket.IO connects to the *current page's origin* — i.e. the CloudFront distribution URL — which then forwards `/socket.io/*` to the ALB. The empty string is intentional for production because CloudFront proxies all WebSocket traffic automatically.

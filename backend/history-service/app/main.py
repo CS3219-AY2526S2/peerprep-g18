@@ -12,4 +12,6 @@ async def health_check():
 app.include_router(history_router, prefix="/history", tags=["History"])
 
 from mangum import Mangum
-handler = Mangum(app, lifespan="auto")
+# lifespan="off": prevents Mangum from triggering startup/shutdown events on each Lambda
+# invocation, which would otherwise add latency on every warm-start request.
+handler = Mangum(app, lifespan="off")

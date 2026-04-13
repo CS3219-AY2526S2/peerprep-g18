@@ -84,27 +84,23 @@ def get_http_client():
         http_client = httpx.AsyncClient()
     return http_client
 
-@app.on_event("startup")
-async def startup():
-    global redis_sessions, redis_auth
-    get_http_client()
+def get_redis_sessions():
+    # Lazy initialisation — reused across warm Lambda invocations.
+    global redis_sessions
+    if redis_sessions is None:
+        sessions_host = os.getenv("REDIS_SESSIONS_HOST", "redis-sessions")
+        redis_sessions = redis.Redis(host=sessions_host, port=6379, decode_responses=True)
+        print("Gateway connected to Redis Sessions DB!")
+    return redis_sessions
 
-    sessions_host = os.getenv("REDIS_SESSIONS_HOST", "redis-sessions")
-    redis_sessions = redis.Redis(host=sessions_host, port=6379, decode_responses=True)
-    print("Gateway connected to Redis Sessions DB!")
-
-    auth_host = os.getenv("REDIS_AUTH_HOST", "redis-auth")
-    redis_auth = redis.Redis(host=auth_host, port=6379, decode_responses=True)
-    print("Gateway connected to Redis Auth DB!")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    if http_client:
-        await http_client.aclose()
-    if redis_sessions:
-        await redis_sessions.close()
-    if redis_auth:
-        await redis_auth.close()
+def get_redis_auth():
+    # Lazy initialisation — reused across warm Lambda invocations.
+    global redis_auth
+    if redis_auth is None:
+        auth_host = os.getenv("REDIS_AUTH_HOST", "redis-auth")
+        redis_auth = redis.Redis(host=auth_host, port=6379, decode_responses=True)
+        print("Gateway connected to Redis Auth DB!")
+    return redis_auth
 
 # ==========================================
 # MICROSERVICE ROUTING TABLE
@@ -148,12 +144,12 @@ async def verify_token(request: Request):
     # -------------------------------------------------------
     try:
         # 1. Was this user deleted by an admin?
-        if await redis_auth.exists(f"invalidated_user:{uid}"):
+        if await get_redis_auth().exists(f"invalidated_user:{uid}"):
             raise HTTPException(status_code=401, detail="ACCOUNT_DELETED")
 
         # 2. Were this user's claims updated after this token was issued?
         #    (e.g. promoted to admin — token still carries old role)
-        stale_ts = await redis_auth.get(f"stale_claims:{uid}")
+        stale_ts = await get_redis_auth().get(f"stale_claims:{uid}")
         if stale_ts and iat <= int(stale_ts):
             raise HTTPException(status_code=403, detail="TOKEN_STALE")
     except HTTPException:
@@ -193,10 +189,10 @@ async def initialize_collab_session(request: Request):
 
     # The Atomic Race
     # SETNX returns True if it successfully set the key, False if the key already existed.
-    is_leader = await redis_sessions.setnx(lock_key, my_generated_room_id)
+    is_leader = await get_redis_sessions().setnx(lock_key, my_generated_room_id)
     
     # Set a 5s expiration on the lock
-    await redis_sessions.expire(lock_key, 5) 
+    await get_redis_sessions().expire(lock_key, 5) 
 
     if is_leader:
         # --- LEADER LOGIC ---
@@ -205,6 +201,7 @@ async def initialize_collab_session(request: Request):
         # Fetch question
         question_id = "1"
         try:
+            # QUESTION_SERVICE_URL is injected by Terraform (Lambda function URL) or docker-compose (hostname).
             target_question_service = os.getenv("QUESTION_SERVICE_URL", "http://question-service:6768").rstrip("/")
             response = await get_http_client().get(
                 f"{target_question_service}/question/", 
@@ -230,18 +227,18 @@ async def initialize_collab_session(request: Request):
             "startedAt": utc_time
         })        
         # Session expires in 2 hours
-        await redis_sessions.setex(f"session:{final_room_id}:meta", 7200, meta_payload)
-        await redis_sessions.setex(f"active_session:{users[0]}", 7200, final_room_id)
-        await redis_sessions.setex(f"active_session:{users[1]}", 7200, final_room_id)
+        await get_redis_sessions().setex(f"session:{final_room_id}:meta", 7200, meta_payload)
+        await get_redis_sessions().setex(f"active_session:{users[0]}", 7200, final_room_id)
+        await get_redis_sessions().setex(f"active_session:{users[1]}", 7200, final_room_id)
         print(f"I am the LEADER. Provisioned room: {final_room_id} with Question: {question_id}")
 
     else:
         # --- FOLLOWER LOGIC ---
-        final_room_id = await redis_sessions.get(lock_key)
+        final_room_id = await get_redis_sessions().get(lock_key)
         
         # Briefly poll to ensure the Leader finished writing the meta payload
         for _ in range(50):
-            meta = await redis_sessions.get(f"session:{final_room_id}:meta")
+            meta = await get_redis_sessions().get(f"session:{final_room_id}:meta")
             if meta:
                 break
             await asyncio.sleep(0.2)
@@ -325,7 +322,11 @@ async def gateway_proxy(request: Request, path: str):
     )
 
 from mangum import Mangum
-handler = Mangum(app, lifespan="auto")
+# api_gateway_base_path="/api": strips the /api prefix that CloudFront forwards for AWS API Gateway
+# invocations. Has no effect when running locally via uvicorn (where nginx strips /api already).
+# lifespan="off": prevents Mangum from triggering startup/shutdown events on every Lambda
+# invocation, which would otherwise close and re-open Redis connections on each request.
+handler = Mangum(app, lifespan="off", api_gateway_base_path="/api")
 
 if __name__ == "__main__":
     import uvicorn
