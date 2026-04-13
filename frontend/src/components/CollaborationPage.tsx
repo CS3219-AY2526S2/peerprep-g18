@@ -211,6 +211,7 @@ export function CollaborationPage() {
         editorSocket = io(`${ALB_URL}/editor`, {
           path: '/socket.io',
           query: { ticket },
+          transports: ['websocket'],
           reconnection: false,
           forceNew: true
         });
