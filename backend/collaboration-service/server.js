@@ -558,8 +558,7 @@ async function handleUserEnded(sessionId, userId, finalCode) {
   };
   console.log(`[history] Saving history for ${userId} (session=${sessionId}, question=${meta.questionId})`);
   const targetHistoryService = (process.env.HISTORY_SERVICE_URL || 'http://history-service:6770').replace(/\/$/, '');
-  await axios.post(`${targetHistoryService}/history`, payload);
-  console.log(`[history] History saved successfully for ${userId} (session=${sessionId})`);
+  await axios.post(`${targetHistoryService}/history/`, payload);
 
   // Only clear the active session pointer if it still refers to this session —
   // the user may have already joined a new session by the time this runs.
@@ -603,7 +602,7 @@ async function handleSessionEnded(sessionId) {
         submittedBy: uid
       };
       const targetHistoryService = (process.env.HISTORY_SERVICE_URL || 'http://history-service:6770').replace(/\/$/, '');
-      await axios.post(`${targetHistoryService}/history`, payload);
+      await axios.post(`${targetHistoryService}/history/`, payload);
       console.log(`[session-cleanup] Catch-up history saved for ${uid} (session=${sessionId})`);
     } else {
       console.log(`[session-cleanup] ${uid} already saved, skipping (session=${sessionId})`);
