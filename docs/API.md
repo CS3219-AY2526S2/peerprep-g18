@@ -25,7 +25,7 @@ Create a new user profile and identity. Sends a verification email upon creation
   ```
 - **Responses:**
   - `200 OK`: User created successfully. Returns the user profile.
-  - `400 Bad Request`: Username/Email already exists or passwords don't match.
+  - `400 Bad Request`: Username (checked case-insensitively) or Email already exists or passwords don't match.
   - `500 Internal Server Error`: Firebase Auth or Firestore failure.
 
 #### `GET /users/{user_id}`
@@ -35,7 +35,7 @@ Retrieve a user's profile by their unique ID.
   - `404 Not Found`: User profile does not exist.
 
 #### `GET /users/lookup/{username}`
-Find a user's email by their username (useful for multi-identifier login).
+Find a user's email by their username (case-insensitive, useful for multi-identifier login).
 - **Responses:**
   - `200 OK`: `{"email": "user@example.com"}`
   - `404 Not Found`: Username does not exist.
@@ -55,7 +55,7 @@ Update username or password.
 - **Responses:**
   - `200 OK`: Update successful.
   - `403 Forbidden`: `X-User-Id` does not match `{user_id}`.
-  - `400 Bad Request`: Username already taken or validation error.
+  - `400 Bad Request`: Username already taken (checked case-insensitively) or validation error.
 
 #### `PATCH /users/{user_id}/avatar`
 Update a user's avatar.

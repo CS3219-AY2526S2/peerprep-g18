@@ -153,10 +153,16 @@ def create_user(user: UserCreate):
     users_ref = db.collection('Users')
     target_username = user.username.lower()
     
-    # Optimized lookup using where filter
-    existing_user_query = users_ref.where("username", "==", user.username).limit(1).get()
+    # Optimized lookup using normalized field for case-insensitive uniqueness check
+    existing_user_query = users_ref.where("username_lower", "==", target_username).limit(1).get()
     if len(existing_user_query) > 0:
         raise HTTPException(status_code=400, detail="Username already exists")
+
+    # Fallback for existing users who might not have username_lower yet (one-time check)
+    # This can be removed after a full migration.
+    for doc in users_ref.stream():
+        if doc.to_dict().get("username", "").lower() == target_username:
+            raise HTTPException(status_code=400, detail="Username already exists")
 
     try:
         user_record = auth.create_user(
@@ -176,6 +182,7 @@ def create_user(user: UserCreate):
     user_data = {
         "user_id": user_record.uid,
         "username": user.username,
+        "username_lower": target_username,
         "email": user.email,
         "avatar_id": user.avatar_id,
         "role": user.role
@@ -206,11 +213,28 @@ def lookup_email_by_username(username: str):
     users_ref = db.collection('Users')
     target_username = username.lower()
     
-    # Optimized lookup using where filter
-    query = users_ref.where("username", "==", username).limit(1).get()
+    # 1. Optimized lookup using normalized field (efficient for new/migrated users)
+    query = users_ref.where("username_lower", "==", target_username).limit(1).get()
     if len(query) > 0:
         return {"email": query[0].to_dict().get("email")}
         
+    # 2. Fallback: exact match (for users who haven't migrated but used exact casing)
+    query = users_ref.where("username", "==", username).limit(1).get()
+    if len(query) > 0:
+        user_doc = query[0]
+        # Self-healing: update document with username_lower for next time
+        user_doc.reference.update({"username_lower": target_username})
+        return {"email": user_doc.to_dict().get("email")}
+
+    # 3. Last resort: stream and filter (case-insensitive for old users)
+    # This is a one-time cost per user until they are "self-healed".
+    for doc in users_ref.stream():
+        data = doc.to_dict()
+        if data.get("username", "").lower() == target_username:
+            # Self-healing: update document with username_lower for next time
+            doc.reference.update({"username_lower": target_username})
+            return {"email": data.get("email")}
+            
     raise HTTPException(status_code=404, detail="Username not found")
 
 @app.patch("/users/{user_id}")
@@ -234,12 +258,18 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
         users_ref = db.collection('Users')
         target_username = update_data.username.lower()
         
-        # Optimized lookup using where filter
-        existing_user_query = users_ref.where("username", "==", update_data.username).limit(1).get()
+        # Optimized lookup using normalized field for case-insensitive uniqueness check
+        existing_user_query = users_ref.where("username_lower", "==", target_username).limit(1).get()
         if len(existing_user_query) > 0 and existing_user_query[0].id != user_id:
             raise HTTPException(status_code=400, detail="Username already exists")
         
+        # Fallback for existing users who might not have username_lower yet
+        for doc in users_ref.stream():
+            if doc.to_dict().get("username", "").lower() == target_username and doc.id != user_id:
+                raise HTTPException(status_code=400, detail="Username already exists")
+        
         update_dict['username'] = update_data.username
+        update_dict['username_lower'] = target_username
 
     # Check for lowercase 'avatar_id'
     if update_data.avatar_id is not None:

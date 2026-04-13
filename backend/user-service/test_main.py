@@ -62,13 +62,36 @@ def test_lookup_username_not_found(client):
     assert response.status_code == 404
     assert response.json() == {"detail": "Username not found"}
 
-def test_lookup_username_success(client):
-    """Test looking up a username successfully."""
-    # Updated mock to use .where()
+def test_lookup_username_success_case_insensitive(client):
+    """Test looking up a username case-insensitively."""
     mock_user = MagicMock()
-    mock_user.to_dict.return_value = {"username": "TestUser", "email": "test@example.com"}
+    mock_user.to_dict.return_value = {"username": "Alice", "email": "alice@example.com"}
+    
+    # First attempt: lookup via username_lower
     mock_db.collection.return_value.where.return_value.limit.return_value.get.return_value = [mock_user]
     
-    response = client.get("/users/lookup/testuser")
+    # We call with lowercase 'alice', it should match 'Alice' (mocked)
+    response = client.get("/users/lookup/alice")
     assert response.status_code == 200
-    assert response.json() == {"email": "test@example.com"}
+    assert response.json() == {"email": "alice@example.com"}
+    
+    # Verify that it queried by username_lower
+    mock_db.collection.return_value.where.assert_called_with("username_lower", "==", "alice")
+
+def test_lookup_username_fallback_stream(client):
+    """Test looking up a username via streaming fallback (for legacy users)."""
+    # 1. username_lower lookup returns empty
+    # 2. username lookup returns empty
+    mock_db.collection.return_value.where.return_value.limit.return_value.get.return_value = []
+    
+    # 3. stream() returns a list of docs
+    mock_user_doc = MagicMock()
+    mock_user_doc.to_dict.return_value = {"username": "LegacyUser", "email": "legacy@example.com"}
+    mock_db.collection.return_value.stream.return_value = [mock_user_doc]
+    
+    response = client.get("/users/lookup/legacyuser")
+    assert response.status_code == 200
+    assert response.json() == {"email": "legacy@example.com"}
+    
+    # Verify self-healing was triggered
+    mock_user_doc.reference.update.assert_called_with({"username_lower": "legacyuser"})
