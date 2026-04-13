@@ -126,14 +126,9 @@ resource "aws_lambda_function" "internal_services" {
       REDIS_AUTH_HOST      = aws_elasticache_cluster.redis.cache_nodes[0].address
       FRONTEND_URL         = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}"
       
-      # Internal services use placeholder URLs for bootstrap; CI/CD will update them if needed.
-      # Or they can use the Function URLs if we define them carefully.
-      # To break the cycle, we don't reference aws_lambda_function_url here yet.
-      USER_SERVICE_URL     = "http://user-service:6767"
-      QUESTION_SERVICE_URL = "http://question-service:6768"
-      HISTORY_SERVICE_URL  = "http://history-service:6770"
-      AI_SERVICE_URL       = "http://ai-service:6771"
-      
+      # Cross-service URLs: stateful services are always reachable via the ALB.
+      # history-service also needs QUESTION_SERVICE_URL (Lambda function URL); that is
+      # injected after the function URLs are created by the terraform_data resource below.
       MATCHING_SERVICE_URL = "http://${aws_lb.main_alb.dns_name}"
       COLLAB_SERVICE_URL   = "http://${aws_lb.main_alb.dns_name}"
     }
@@ -149,6 +144,35 @@ resource "aws_lambda_function_url" "internal_service_urls" {
   for_each           = local.internal_lambda_services
   function_name      = aws_lambda_function.internal_services[each.key].function_name
   authorization_type = "NONE" # Simple for now; secure with IAM in prod
+}
+
+# 4.2a. Post-creation: inject cross-service Lambda function URLs into history-service.
+# history-service calls question-service internally to enrich history records.
+# We cannot reference aws_lambda_function_url.internal_service_urls inside the
+# internal_services for_each block (circular dependency), so we patch the env
+# after both function URLs are available using a local-exec provisioner.
+resource "terraform_data" "history_service_env_update" {
+  triggers_replace = [
+    aws_lambda_function_url.internal_service_urls["question-service"].function_url,
+    aws_lambda_function_url.internal_service_urls["user-service"].function_url,
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws lambda update-function-configuration \
+        --function-name peerprep-history-service \
+        --environment "Variables={
+          REDIS_SESSIONS_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address},
+          REDIS_AUTH_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address},
+          FRONTEND_URL=https://${aws_cloudfront_distribution.frontend_distribution.domain_name},
+          QUESTION_SERVICE_URL=${aws_lambda_function_url.internal_service_urls["question-service"].function_url},
+          USER_SERVICE_URL=${aws_lambda_function_url.internal_service_urls["user-service"].function_url},
+          MATCHING_SERVICE_URL=http://${aws_lb.main_alb.dns_name},
+          COLLAB_SERVICE_URL=http://${aws_lb.main_alb.dns_name}
+        }" \
+        --region ${var.region}
+    EOT
+  }
 }
 
 # 4.3. API Gateway Lambda (The Entry Point)

@@ -33,7 +33,7 @@ services:
       - REDIS_AUTH_HOST=redis-auth
       - USER_SERVICE_URL=http://user-service:6767
       - QUESTION_SERVICE_URL=http://question-service:6768
-      - MATCHING_SERVICE_URL=http://matching-service:6769
+      - MATCHING_SERVICE_URL=http://matching-service:8001
       - COLLAB_SERVICE_URL=http://collab-service:4000
       - HISTORY_SERVICE_URL=http://history-service:6770
 
@@ -68,6 +68,7 @@ services:
       - redis-pubsub
       - history-service
     environment:
+      - PORT=4000
       - REDIS_SESSIONS_HOST=redis-sessions
       - REDIS_PUBSUB_HOST=redis-pubsub
       - QUESTION_SERVICE_URL=http://question-service:6768
@@ -115,7 +116,7 @@ services:
     build: ./matching-service
     container_name: matching-service
     expose:
-      - "6769"
+      - "8001"
     volumes:
       - ./matching-service:/app
     depends_on:
@@ -123,6 +124,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_MATCH_HOST=redis-matching
+      - PORT=8001
   
   redis-matching:
     image: redis:7-alpine
