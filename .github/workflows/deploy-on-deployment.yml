@@ -1,0 +1,34 @@
+name: Deploy All Services (Deployment Branch)
+
+on:
+  push:
+    branches:
+      - deployment
+  workflow_dispatch:
+
+jobs:
+  trigger-deployments:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trigger Service Deployments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          services=(
+            "deploy-ai-service.yml"
+            "deploy-api-gateway.yml"
+            "deploy-history-service.yml"
+            "deploy-question-service.yml"
+            "deploy-user-service.yml"
+            "deploy-matching-service.yml"
+            "deploy-collaboration-service.yml"
+          )
+          for service in "${services[@]}"; do
+            echo "Triggering $service on deployment branch..."
+            gh workflow run "$service" --ref deployment
+          done
