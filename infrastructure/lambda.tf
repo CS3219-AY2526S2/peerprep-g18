@@ -158,20 +158,8 @@ resource "terraform_data" "history_service_env_update" {
   ]
 
   provisioner "local-exec" {
-    command = <<-EOT
-      aws lambda update-function-configuration \
-        --function-name peerprep-history-service \
-        --environment "Variables={
-          REDIS_SESSIONS_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address},
-          REDIS_AUTH_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address},
-          FRONTEND_URL=https://${aws_cloudfront_distribution.frontend_distribution.domain_name},
-          QUESTION_SERVICE_URL=${aws_lambda_function_url.internal_service_urls["question-service"].function_url},
-          USER_SERVICE_URL=${aws_lambda_function_url.internal_service_urls["user-service"].function_url},
-          MATCHING_SERVICE_URL=http://${aws_lb.main_alb.dns_name},
-          COLLAB_SERVICE_URL=http://${aws_lb.main_alb.dns_name}
-        }" \
-        --region ${var.region}
-    EOT
+    interpreter = ["powershell", "-Command"]
+    command     = "aws lambda update-function-configuration --function-name peerprep-history-service --environment 'Variables={REDIS_SESSIONS_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address},REDIS_AUTH_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address},FRONTEND_URL=https://${aws_cloudfront_distribution.frontend_distribution.domain_name},QUESTION_SERVICE_URL=${aws_lambda_function_url.internal_service_urls["question-service"].function_url},USER_SERVICE_URL=${aws_lambda_function_url.internal_service_urls["user-service"].function_url},MATCHING_SERVICE_URL=http://${aws_lb.main_alb.dns_name},COLLAB_SERVICE_URL=http://${aws_lb.main_alb.dns_name}}' --region ${var.region}"
   }
 }
 
