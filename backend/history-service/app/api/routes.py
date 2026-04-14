@@ -40,7 +40,7 @@ def verify_admin(x_user_role: Optional[str]):
         )
 
 # --- HISTORY ENDPOINTS ---
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def save_history(payload: HistoryBase):
     qn_id = payload.questionId
     start_time_iso = payload.startedAt.isoformat()

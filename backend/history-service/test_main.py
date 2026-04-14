@@ -75,7 +75,7 @@ async def test_save_history():
     mock_response.json.return_value = {"title": "New Title", "topic": "Strings", "difficulty": "Easy"}
     mock_http_client.get.return_value = mock_response
 
-    response = client.post("/history/", json=payload)
+    response = client.post("/history", json=payload)
     
     assert response.status_code == 201
     assert response.json() == {"detail": "saved"}
