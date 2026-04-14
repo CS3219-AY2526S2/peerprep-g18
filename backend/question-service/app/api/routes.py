@@ -23,7 +23,7 @@ def verify_admin(x_user_role: Optional[str]):
 # --- ADMIN ENDPOINTS ---
 
 # To add a new question to the database.
-@router.post("/", response_model=Question, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=Question, status_code=status.HTTP_201_CREATED)
 async def create_question(
     question: QuestionCreate, 
     x_user_role: Optional[str] = Header(None)

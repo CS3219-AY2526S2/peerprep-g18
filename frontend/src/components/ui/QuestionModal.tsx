@@ -107,7 +107,7 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
         try {
             const token = localStorage.getItem('peerprep_token');
             const url = mode === 'add'
-                ? `${GATEWAY_URL}/question/`
+                ? `${GATEWAY_URL}/question`
                 : `${GATEWAY_URL}/question/${initialData?.question_id}`;
 
             const response = await fetch(url, {
