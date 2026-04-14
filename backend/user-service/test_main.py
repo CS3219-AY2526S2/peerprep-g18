@@ -20,6 +20,8 @@ with patch('firebase_admin.credentials.Certificate'), \
     # We must ensure the environment variable for SMTP is set or handled if needed
     import main
     from main import app
+    main._db = mock_db
+    main._secrets_loaded = True
 
 @pytest.fixture
 def client():

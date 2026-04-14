@@ -14,6 +14,8 @@ with patch('firebase_admin.credentials.Certificate'), \
      patch('httpx.AsyncClient', return_value=mock_http_client):
     # Import app from the main module and rename it to avoid collision with 'app' package
     from app.main import app as fastapi_app
+    import app.database as db_module
+    db_module._db = mock_db
 
 # Inject mock client for history-service lazy initialization
 # This needs to match the import in app/api/routes.py

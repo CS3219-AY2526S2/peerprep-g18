@@ -215,7 +215,7 @@ async def initialize_collab_session(request: Request):
             response = await get_http_client().get(
                 question_url,
                 params={"topic": topic, "difficulty": difficulty},
-                timeout=5.0
+                timeout=20.0
             )
             print(f"[session/init] Question service responded: status={response.status_code} body={response.text[:200]}")
             if response.status_code == 200:

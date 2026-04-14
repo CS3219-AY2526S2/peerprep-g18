@@ -58,8 +58,28 @@ def load_secrets():
     except Exception as e:
         print(f"Note: Could not load peerprep/backend-env from Secrets Manager: {e}")
 
-load_secrets()
-db = firestore.client()
+_secrets_loaded = False
+
+def _ensure_secrets():
+    global _secrets_loaded
+    if not _secrets_loaded:
+        load_secrets()
+        _secrets_loaded = True
+
+_db = None
+
+def get_db():
+    global _db
+    if _db is None:
+        _ensure_secrets()
+        _db = firestore.client()
+    return _db
+
+class _LazyDb:
+    def __getattr__(self, name):
+        return getattr(get_db(), name)
+
+db = _LazyDb()
 
 # Redis client for auth invalidation signals (read by the API gateway)
 redis_auth = redis_sync.Redis(
