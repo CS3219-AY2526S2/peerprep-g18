@@ -9,6 +9,9 @@ with patch('firebase_admin.credentials.Certificate'), \
      patch('firebase_admin.initialize_app'), \
      patch('firebase_admin.firestore.client', return_value=mock_db):
     from app.main import app
+    import app.database as db_module
+    # Inject the mock directly so lazy get_db() returns it without network calls
+    db_module._db = mock_db
 
 def test_health_check():
     """Verify health check returns healthy."""

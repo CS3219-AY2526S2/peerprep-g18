@@ -37,15 +37,29 @@ def get_firebase_credentials():
         print(f"WARNING: Could not fetch secret from AWS: {str(e)}. This is expected in local/CI environments.")
         return None
 
-# Initialize Firestore
-if not firebase_admin._apps:
-    cred = get_firebase_credentials()
-    if cred:
-        firebase_admin.initialize_app(cred)
-    else:
-        try:
-            firebase_admin.initialize_app()
-        except Exception as e:
-            print(f"WARNING: Firebase initialization failed: {str(e)}. Proceeding without Firebase (may cause test failures if not mocked).")
+def _init_firebase():
+    if not firebase_admin._apps:
+        cred = get_firebase_credentials()
+        if cred:
+            firebase_admin.initialize_app(cred)
+        else:
+            try:
+                firebase_admin.initialize_app()
+            except Exception as e:
+                print(f"WARNING: Firebase initialization failed: {str(e)}. Proceeding without Firebase (may cause test failures if not mocked).")
 
-db = firestore.client()
+_db = None
+
+def get_db():
+    global _db
+    if _db is None:
+        _init_firebase()
+        _db = firestore.client()
+    return _db
+
+# Backwards-compatible alias — resolves lazily on first attribute access
+class _LazyDb:
+    def __getattr__(self, name):
+        return getattr(get_db(), name)
+
+db = _LazyDb()
