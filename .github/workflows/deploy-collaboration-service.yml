@@ -2,7 +2,7 @@ name: Deploy Collaboration Service
 
 on:
   push:
-    branches: [ main ]
+    branches: [ deployment ]
     paths:
       - 'backend/collaboration-service/**'
       - '.github/workflows/deploy-collaboration-service.yml'

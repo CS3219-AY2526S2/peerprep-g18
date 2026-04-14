@@ -2,7 +2,7 @@ name: Deploy History Service
 
 on:
   push:
-    branches: [ main ]
+    branches: [ deployment ]
     paths:
       - 'backend/history-service/**'
       - '.github/workflows/deploy-history-service.yml'

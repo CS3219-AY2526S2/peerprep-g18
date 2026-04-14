@@ -2,7 +2,7 @@ name: Deploy Question Service
 
 on:
   push:
-    branches: [ main ]
+    branches: [ deployment ]
     paths:
       - 'backend/question-service/**'
       - '.github/workflows/deploy-question-service.yml'

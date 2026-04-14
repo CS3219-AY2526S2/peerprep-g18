@@ -2,7 +2,7 @@ name: Deploy Matching Service
 
 on:
   push:
-    branches: [ main ]
+    branches: [ deployment ]
     paths:
       - 'backend/matching-service/**'
       - '.github/workflows/deploy-matching-service.yml'

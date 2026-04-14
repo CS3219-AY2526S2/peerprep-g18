@@ -2,7 +2,7 @@ name: Deploy AI Service
 
 on:
   push:
-    branches: [ main ]
+    branches: [ deployment ]
     paths:
       - 'backend/ai-service/**'
       - '.github/workflows/deploy-ai-service.yml'
