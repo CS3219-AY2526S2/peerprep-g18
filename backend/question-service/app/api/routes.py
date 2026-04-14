@@ -221,7 +221,7 @@ async def get_all_questions(
 # --- USER ENDPOINTS ---
 
 # Get a random question ID based on a given topic and difficulty level
-@router.get("/", response_model=dict)
+@router.get("", response_model=dict)
 async def read_questions(
     topic: str, 
     difficulty: str

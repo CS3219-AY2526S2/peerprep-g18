@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from app.api.routes import router as question_router
 
-app = FastAPI(title="PeerPrep Question Service")
+app = FastAPI(title="PeerPrep Question Service", redirect_slashes=False)
 
 # Standard health check
 @app.get("/health")
