@@ -65,6 +65,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         });
 
         if (res.ok) {
+          const contentType = res.headers.get('content-type') ?? '';
+          if (!contentType.includes('application/json')) {
+            if (attempt < maxRetries - 1) {
+              await new Promise(r => setTimeout(r, 3000));
+              attempt++;
+              continue;
+            }
+            throw new Error('Profile not found. Please try logging in again.');
+          }
           const profileData = await res.json();
           setUser({
             ...profileData,

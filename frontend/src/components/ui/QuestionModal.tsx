@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Loader2, Save, PlusCircle, List  } from 'lucide-react';
 import { GATEWAY_URL } from '../../constants';
 import { DynamicArrayInput } from './DynamicArrayInput';
+import { ConfirmDialog } from './ConfirmDialog';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 import { dracula } from '@uiw/codemirror-theme-dracula';
@@ -43,6 +44,8 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
   const [isCreatingNewTopic, setIsCreatingNewTopic] = useState(false);
   const [newTopicInput, setNewTopicInput] = useState('');
   const [initialRef, setInitialRef] = useState(JSON.stringify(formData));
+  const [formError, setFormError] = useState('');
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
  
   useEffect(() => {
     if (isOpen) {
@@ -69,9 +72,7 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
 
     const handleCloseAttempt = () => {
         if (hasUnsavedChanges) {
-            if (window.confirm("You have unsaved changes. Are you sure you want to discard them?")) {
-                onClose();
-            }
+            setShowDiscardConfirm(true);
         } else {
             onClose();
         }
@@ -87,14 +88,16 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
 
         const reservedNames = ['all', 'all topics', 'any', 'any topic', 'all topic'];
         if (isCreatingNewTopic && reservedNames.includes(cleanTopic.toLowerCase())) {
-            alert(`"${cleanTopic}" is a reserved system name. Please choose a different name.`);
+            setFormError(`"${cleanTopic}" is a reserved system name. Please choose a different name.`);
             return;
         }
 
         if (!cleanTitle || !cleanTopic) {
-            alert("Title and Topic cannot be empty or just whitespace.");
+            setFormError('Title and Topic cannot be empty or just whitespace.');
             return;
         }
+
+        setFormError('');
 
         const finalData = {
             ...formData,
@@ -126,9 +129,9 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
             onClose();
         } catch (err: unknown) {
             if (err instanceof Error) {
-              alert(err.message);
+              setFormError(err.message);
             } else {
-              alert(`An unknown error occurred while ${mode}ing question`);
+              setFormError(`An unknown error occurred while ${mode}ing question`);
             }
         } finally {
             setIsSubmitting(false);
@@ -151,6 +154,7 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
   if (!isOpen) return null;
 
   return (
+    <>
     <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-6 z-[100]">
       <div className="bg-[#4A4563] rounded-[32px] w-full max-w-3xl max-h-[90vh] overflow-y-auto p-10 relative custom-scrollbar border border-white/10 shadow-2xl">
         <button onClick={handleCloseAttempt} className="absolute top-6 right-6 text-gray-400 hover:text-white transition-colors">
@@ -284,6 +288,12 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
             />
           </div>
 
+          {formError && (
+            <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-2xl text-sm">
+              {formError}
+            </div>
+          )}
+
           {/* Action Buttons: Save or Discard */}
           <div className="flex gap-4  bottom-0 bg-[#4A4563] pt-4 pb-2">
             <button 
@@ -305,5 +315,16 @@ export function QuestionModal({ isOpen, onClose, onSuccess, mode, initialData, t
         </form>
       </div>
     </div>
+
+    <ConfirmDialog
+      isOpen={showDiscardConfirm}
+      title="Discard Changes"
+      message="You have unsaved changes. Are you sure you want to discard them?"
+      confirmLabel="Discard"
+      danger={true}
+      onConfirm={() => { setShowDiscardConfirm(false); onClose(); }}
+      onCancel={() => setShowDiscardConfirm(false)}
+    />
+    </>
   );
 }

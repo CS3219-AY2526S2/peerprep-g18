@@ -149,18 +149,21 @@ resource "aws_cloudfront_distribution" "frontend_distribution" {
   }
 
   # SPA Routing: Redirect 403 and 404 errors to index.html
+  # error_caching_min_ttl = 0 prevents CloudFront from caching API error responses
+  # (e.g. a transient 404 from a cold Lambda would otherwise be cached and served as
+  # index.html for up to the default TTL, breaking login for affected users).
   custom_error_response {
     error_code            = 403
     response_code         = 200
     response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
+    error_caching_min_ttl = 0
   }
 
   custom_error_response {
     error_code            = 404
     response_code         = 200
     response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
+    error_caching_min_ttl = 0
   }
 
   restrictions {
