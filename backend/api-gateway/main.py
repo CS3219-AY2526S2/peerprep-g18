@@ -44,8 +44,12 @@ def get_firebase_credentials():
         print(f"WARNING: Could not fetch secret from AWS: {str(e)}. This is expected in local/CI environments.")
         return None
 
-# Initialize Firebase
-if not firebase_admin._apps:
+_firebase_initialized = False
+
+def _init_firebase():
+    global _firebase_initialized
+    if _firebase_initialized or firebase_admin._apps:
+        return
     try:
         cred = get_firebase_credentials()
         if cred:
@@ -55,6 +59,7 @@ if not firebase_admin._apps:
             print("WARNING: Firebase Admin not initialized (no credentials found).")
     except Exception as e:
         print(f"WARNING: Firebase initialization failed: {str(e)}")
+    _firebase_initialized = True
 
 app = FastAPI(title="PeerPrep API Gateway")
 
@@ -122,6 +127,7 @@ PUBLIC_ROUTES = [
 ]
 
 async def verify_token(request: Request):
+    _init_firebase()
     auth_header = request.headers.get("Authorization")
     if not auth_header:
         raise HTTPException(status_code=401, detail="Missing Header")
