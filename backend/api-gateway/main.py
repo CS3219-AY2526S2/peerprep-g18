@@ -210,12 +210,13 @@ async def initialize_collab_session(request: Request):
         question_id = "1"
         try:
             target_question_service = os.getenv("QUESTION_SERVICE_URL", "http://question-service:6768").rstrip("/")
-            question_url = f"{target_question_service}/question/"
+            question_url = f"{target_question_service}/question"
             print(f"[session/init] Fetching question from {question_url} params={{topic={topic}, difficulty={difficulty}}}")
             response = await get_http_client().get(
                 question_url,
                 params={"topic": topic, "difficulty": difficulty},
-                timeout=20.0
+                timeout=20.0,
+                follow_redirects=True
             )
             print(f"[session/init] Question service responded: status={response.status_code} body={response.text[:200]}")
             if response.status_code == 200:
