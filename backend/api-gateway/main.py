@@ -200,25 +200,32 @@ async def initialize_collab_session(request: Request):
     # Set a 5s expiration on the lock
     await get_redis_sessions().expire(lock_key, 5) 
 
+    print(f"[session/init] uid={uid} peer={peer_id} topic={topic} difficulty={difficulty} is_leader={is_leader}")
+
     if is_leader:
         # --- LEADER LOGIC ---
         final_room_id = my_generated_room_id
-        
+
         # Fetch question
         question_id = "1"
         try:
-            # QUESTION_SERVICE_URL is injected by Terraform (Lambda function URL) or docker-compose (hostname).
             target_question_service = os.getenv("QUESTION_SERVICE_URL", "http://question-service:6768").rstrip("/")
+            question_url = f"{target_question_service}/question/"
+            print(f"[session/init] Fetching question from {question_url} params={{topic={topic}, difficulty={difficulty}}}")
             response = await get_http_client().get(
-                f"{target_question_service}/question/", 
+                question_url,
                 params={"topic": topic, "difficulty": difficulty},
                 timeout=5.0
             )
+            print(f"[session/init] Question service responded: status={response.status_code} body={response.text[:200]}")
             if response.status_code == 200:
                 q_data = response.json()
                 question_id = q_data.get("question_id", question_id)
+                print(f"[session/init] Resolved question_id={question_id}")
+            else:
+                print(f"[session/init] Non-200 from question service — falling back to question_id=1")
         except Exception as e:
-            print(f"Leader failed to fetch question from Question Service: {str(e)}")
+            print(f"[session/init] Exception fetching question: {type(e).__name__}: {str(e)}")
 
         # Write the shared metadata for the Collab Service to use
         from datetime import datetime, timezone
@@ -231,25 +238,27 @@ async def initialize_collab_session(request: Request):
             "difficulty": difficulty,
             "questionId": question_id,
             "startedAt": utc_time
-        })        
+        })
         # Session expires in 2 hours
         await get_redis_sessions().setex(f"session:{final_room_id}:meta", 7200, meta_payload)
         await get_redis_sessions().setex(f"active_session:{users[0]}", 7200, final_room_id)
         await get_redis_sessions().setex(f"active_session:{users[1]}", 7200, final_room_id)
-        print(f"I am the LEADER. Provisioned room: {final_room_id} with Question: {question_id}")
+        print(f"[session/init] LEADER provisioned room={final_room_id} question_id={question_id}")
 
     else:
         # --- FOLLOWER LOGIC ---
         final_room_id = await get_redis_sessions().get(lock_key)
-        
+        print(f"[session/init] FOLLOWER joining room={final_room_id}")
+
         # Briefly poll to ensure the Leader finished writing the meta payload
-        for _ in range(50):
+        for attempt in range(50):
             meta = await get_redis_sessions().get(f"session:{final_room_id}:meta")
             if meta:
+                print(f"[session/init] FOLLOWER got meta after {attempt + 1} poll(s)")
                 break
             await asyncio.sleep(0.2)
-            
-        print(f"I am the FOLLOWER. Joining existing room: {final_room_id}")
+        else:
+            print(f"[session/init] FOLLOWER timed out waiting for meta on room={final_room_id}")
 
     # Both leader and follower return the exact same room_id to the React frontend
     return {"room_id": final_room_id}
