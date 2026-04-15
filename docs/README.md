@@ -15,22 +15,30 @@ This `docs/` folder contains living documentation for our PeerPrep project (CS32
   RESTful and WebSocket API documentation for all microservices: User Service, Question Service, Matching Service, Collaboration Service, History Service, and AI Service.
 
 - [`UML.md`](UML.md)
-  Central place to track and maintain our UML diagrams (component/sequence diagrams), including allocated space for our current surface-level sequence diagrams (Question History integration + overall user workflow).
+  Central place to track and maintain our UML diagrams (component/sequence diagrams). Includes actual diagram images for system architecture, API Gateway, User Service, Question Service, and various user workflows.
 
 - [`SCHEMA.md`](SCHEMA.md)
   Planned database table schemas for selected microservices / features (e.g., User Service, Question Management, Session History).
   Note: schemas may evolve as we finalize service boundaries and persistence decisions.
 
+- [`TESTING_GUIDE.md`](TESTING_GUIDE.md)
+  Documentation for running tests locally and in CI, including coverage and integration testing details.
+
+- [`deployment/`](deployment/)
+  Contains comprehensive documentation and scripts for AWS deployment:
+  - `AWS_ARCHITECTURE.md` — Deep dive into the AWS ECS/ALB architecture.
+  - `AWS_DEPLOYMENT_GUIDE.md` — Step-by-step instructions for deploying to AWS.
+  - `DEPLOYMENT_PLAN.md` — Phased rollout and rollback strategies.
+  - `scripts/` — Bootstrap scripts for ECR and other infrastructure components.
+
 - [`plantUML/`](plantUML/)
   PlantUML source files for sequence diagrams:
-  - `collab.puml` — Ticket acquisition and WebSocket connection flow
-  - `matchToCollab.puml` — End-to-end flow from matching to collaboration (Polling handled by matching-service; session leader election by api-gateway)
-  - `collabToHistory.puml` — Session end, history save, and Redis cleanup flow (collab-service triggers history-service directly)
-  - `question-service-sequence.puml` — Question service interactions
-  - `user-service-sequence.puml` — User service interactions
-
-- [`ImplementationGuide/CollabImplementation.md`](ImplementationGuide/CollabImplementation.md)
-  Phased implementation log for the collaboration service (Phases 0–7). Phase 7 documents the gateway cleanup migration (2026-03-30).
+  - `api-gateway-sequence.puml` — Auth and proxying flow.
+  - `user-service-sequence.puml` — User registration and management flow.
+  - `question-service-sequence.puml` — Question bank CRUD flow.
+  - `collab.puml` — Ticket acquisition and WebSocket connection flow.
+  - `matchToCollab.puml` — End-to-end flow from matching to collaboration.
+  - `collabToHistory.puml` — Session end, history save, and Redis cleanup flow.
 
 ---
 

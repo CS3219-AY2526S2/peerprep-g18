@@ -28,6 +28,8 @@ peerprep-g18/
   .github/
     workflows/
       ci.yml  (Continuous Integration via Github Actions)
+  infrastructure/
+    ...     (Terraform scripts for AWS infrastructure)
   docs/
     deployment/
       ...     (AWS deployment guide and plan)
@@ -150,7 +152,7 @@ peerprep-g18/
    - API Gateway (Internal) handles routing on port `1234`, manages **distributed session initialization** (leader election via Redis `SETNX`), and injects identity headers (`X-User-Id`, `X-User-Role`).
    - User Service manages profile data in Firestore on port `6767` and coordinates with Firebase Auth.
    - Question Service manages question data in Firestore on port `6768`.
-   - Matching Service manages **polling-based user matching** on port `6769` using Redis-based queuing (LPUSH/BRPOP).
+   - Matching Service manages **polling-based user matching** on port `8001` using Redis-based queuing (LPUSH/BRPOP).
    - Collaboration Service (Internal) manages real-time code editing (Yjs) and chat over Socket.IO on port `4000`. It directly triggers history saving via the History Service.
    - History Service (Internal) saves per-user session records (code snapshots) to Firestore on port `6770`.
    - AI Service (Internal) provides Gemini-powered assistance on port `6771` (limited to 3 requests per session).
