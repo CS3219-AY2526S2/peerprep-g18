@@ -1,3 +1,8 @@
+// AI Assistance Disclosure:
+// Tool: Claude (Opus 4.6 via Claude Code)
+// Scope: Assisted with the Collaboration Service implementation, including Socket.IO + Yjs CRDT session handling, Redis pub/sub adapter integration, session persistence/restoration logic, Gemini AI hint integration, and CloudFront/WebSocket proxying fixes.
+// Author review: I directed the AI with specific plans and instructions, and it followed my design decisions. I validated correctness, tested the endpoints and real-time collaboration flows, and ensured the business logic aligns with the project backlog.
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
