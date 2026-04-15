@@ -1,3 +1,8 @@
+# AI Assistance Disclosure:
+# Tool: Gemini 3 Flash
+# Scope: Assisted with the foundational boilerplate code and the core logic for the database connection.
+# Author review: I adapted the repository structure and database integration patterns from the Question Service to maintain consistency. I  configured the schemas and validated that the connection logic functions correctly.
+
 from fastapi import FastAPI
 from app.api.routes import router as history_router
 

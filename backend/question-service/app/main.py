@@ -1,3 +1,8 @@
+# AI Assistance Disclosure:
+# Tool: Gemini 3 Flash
+# Scope: Generated the boilerplate repository skeleton, the foundational logic for the Firestore database connection, and the implementation of the pagination logic for question retrieval.
+# Author review: I integrated the generated boilerplate and pagination into the service architecture. I validated the Firestore connection and refined the pagination parameters to ensure they align with the overall project requirements.
+
 from fastapi import FastAPI
 from app.api.routes import router as question_router
 

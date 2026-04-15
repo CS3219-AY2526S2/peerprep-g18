@@ -72,7 +72,6 @@ async def save_history(payload: HistoryBase):
 
     except Exception as e:
         print(f"History Service failed to fetch question: {str(e)}")
-        #Should return here with a failure status code??
     
     doc_id = f"{payload.sessionId}_{payload.submittedBy}"
     db.collection("session_history").document(doc_id).set(payload.model_dump(by_alias=True))
