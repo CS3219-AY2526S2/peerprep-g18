@@ -107,7 +107,7 @@ Key points:
 ## 2.4 Deployment diagram
 
 ### 2.4.1 AWS Deployment Diagram
-High-level overview of the cloud infrastructure on AWS, including the VPC, Public/Private subnets, Application Load Balancers, ECS Clusters for microservices, and managed services like RDS (Redis) and CloudFront.
+High-level overview of the cloud infrastructure on AWS, including the VPC, Public/Private subnets, Application Load Balancers, Amazon API Gateway, NAT Gateway, Lambdas & ECS Clusters for microservices, and managed services like ElastiCache (Redis) and CloudFront.
 
 ![Deployment Diagram](images/PeerPrep%20G18_AWS%20Deployment%20Diagram.png)
 
