@@ -2,6 +2,8 @@
 !theme plain
 skinparam responseMessageBelowArrow true
 
+title History Service — Sequence Diagram (caa 15 April 2026)
+
 actor Client
 participant "API Gateway" as GW
 participant "History Service" as HS
