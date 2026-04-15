@@ -1,3 +1,12 @@
+# AI Assistance Disclosure:
+# Tool: Gemini 3.1 Pro 
+# Scope: Developed the template for the AI Service, which will handle interactions with the Gemini API for content generation. 
+#           This includes setting up environment variable loading from AWS Secrets Manager, defining the API endpoint for 
+#           generation requests, and ensuring proper error handling.
+# Author review: I validated correctness, tested the endpoints via smoke-tests, and ensured the business logic aligns with the project backlog.
+#           I also ensured that the code is not only structured for microservice modularity so that it can easily be ported to a different system,
+#           but also employed prompt engineering techniques to ensure that the Gemini API is used effectively for our use cases.
+
 import os
 import json
 import boto3

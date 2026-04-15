@@ -1,3 +1,8 @@
+# AI Assistance Disclosure:
+# Tool: Gemini 3.1 Pro 
+# Scope: Integrated Matching Service alongside the plan for MatchToCollab.puml
+# Author review: I validated correctness, tested the endpoints via smoke-tests, and ensured the business logic aligns with the project backlog. 
+
 import os
 import asyncio
 from fastapi import FastAPI
