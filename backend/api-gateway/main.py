@@ -294,10 +294,26 @@ async def gateway_proxy(request: Request, path: str):
     user_headers = {}
     if not is_public:
         decoded_token = await verify_token(request)
-        user_headers["X-User-Id"] = decoded_token.get("uid")
+        uid = decoded_token.get("uid")
+        user_headers["X-User-Id"] = uid
 
         if "role" in decoded_token:
             user_headers["X-User-Role"] = decoded_token.get("role")
+
+        # Block queue entry if the user is already in an active collaboration session.
+        # active_session:{uid} is set by /session/init and cleared when the session ends.
+        if request.method == "POST" and path == "matching/find-pair":
+            try:
+                active = await redis_sessions.get(f"active_session:{uid}")
+                if active:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="ALREADY_IN_SESSION"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"Session check failed (failing open): {e}")
 
     forwarded_headers = {
         k: v for k, v in request.headers.items()
