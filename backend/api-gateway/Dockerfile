@@ -9,5 +9,5 @@ COPY . .
 
 EXPOSE 1234
 
-# Run uvicorn server on port 1234 with hot-reloading
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "1234", "--reload"]
+# Run Lambda handler
+CMD ["python", "-m", "awslambdaric", "main.handler"]

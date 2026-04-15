@@ -12,7 +12,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { toast } from 'sonner';
-import { GATEWAY_URL } from '../constants';
+import { GATEWAY_URL, ALB_URL } from '../constants';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
 import { avatarUrl } from '../utils/avatar';
@@ -208,7 +208,7 @@ export function CollaborationPage() {
         const ticket = await fetchTicket(sessionId);
         if (cleaned) return;
 
-        editorSocket = io('http://localhost/editor', {
+        editorSocket = io(`${ALB_URL}/editor`, {
           path: '/socket.io',
           query: { ticket },
           transports: ['websocket'],
@@ -326,7 +326,7 @@ export function CollaborationPage() {
         const ticket = await fetchTicket(sessionId);
         if (cleaned) return;
 
-        chatSocket = io('http://localhost/chat', {
+        chatSocket = io(`${ALB_URL}/chat`, {
           path: '/socket.io',
           query: { ticket },
           transports: ['websocket'],

@@ -5,6 +5,9 @@
 
 import os
 import time
+import json
+import boto3
+from botocore.exceptions import ClientError
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, EmailStr, Field, model_validator
@@ -16,10 +19,67 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Initialize Firebase Admin
-cred = credentials.Certificate("firebase-service-account.json")
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+# ==========================================
+# FIREBASE & ENV INITIALIZATION (WITH SECRETS MGR)
+# ==========================================
+def load_secrets():
+    """Load both Firebase and Backend Env secrets from AWS Secrets Manager."""
+    region_name = os.getenv("AWS_REGION", "ap-southeast-1")
+    session = boto3.session.Session()
+    client = session.client(service_name='secretsmanager', region_name=region_name)
+
+    # 1. Load Firebase Credentials
+    secret_file = "firebase-service-account.json"
+    cred = None
+    if os.path.exists(secret_file):
+        cred = credentials.Certificate(secret_file)
+    else:
+        print("Local firebase-service-account.json not found. Attempting to fetch from AWS...")
+        try:
+            resp = client.get_secret_value(SecretId="peerprep/firebase-main")
+            cred = credentials.Certificate(json.loads(resp['SecretString']))
+        except Exception as e:
+            print(f"WARNING: Could not fetch Firebase secret from AWS: {e}. This is expected in local/CI environments.")
+    
+    if cred and not firebase_admin._apps:
+        firebase_admin.initialize_app(cred)
+        print("Firebase Admin initialized.")
+    elif not firebase_admin._apps:
+        print("WARNING: Firebase Admin not initialized (no credentials found).")
+
+    # 2. Load Backend Env Vars (SMTP, etc.)
+    try:
+        resp = client.get_secret_value(SecretId="peerprep/backend-env")
+        env_vars = json.loads(resp['SecretString'])
+        for key, value in env_vars.items():
+            if not os.getenv(key): # Don't override existing env vars
+                os.environ[key] = str(value)
+        print("Backend environment variables loaded from Secrets Manager.")
+    except Exception as e:
+        print(f"Note: Could not load peerprep/backend-env from Secrets Manager: {e}")
+
+_secrets_loaded = False
+
+def _ensure_secrets():
+    global _secrets_loaded
+    if not _secrets_loaded:
+        load_secrets()
+        _secrets_loaded = True
+
+_db = None
+
+def get_db():
+    global _db
+    if _db is None:
+        _ensure_secrets()
+        _db = firestore.client()
+    return _db
+
+class _LazyDb:
+    def __getattr__(self, name):
+        return getattr(get_db(), name)
+
+db = _LazyDb()
 
 # Redis client for auth invalidation signals (read by the API gateway)
 redis_auth = redis_sync.Redis(
@@ -113,11 +173,15 @@ def create_user(user: UserCreate):
     users_ref = db.collection('Users')
     target_username = user.username.lower()
     
-    # Manual backend-side case-insensitive check
-    all_users = users_ref.stream()
-    for doc in all_users:
-        existing_user = doc.to_dict()
-        if existing_user.get('username', '').lower() == target_username:
+    # Optimized lookup using normalized field for case-insensitive uniqueness check
+    existing_user_query = users_ref.where("username_lower", "==", target_username).limit(1).get()
+    if len(existing_user_query) > 0:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    # Fallback for existing users who might not have username_lower yet (one-time check)
+    # This can be removed after a full migration.
+    for doc in users_ref.stream():
+        if doc.to_dict().get("username", "").lower() == target_username:
             raise HTTPException(status_code=400, detail="Username already exists")
 
     try:
@@ -138,6 +202,7 @@ def create_user(user: UserCreate):
     user_data = {
         "user_id": user_record.uid,
         "username": user.username,
+        "username_lower": target_username,
         "email": user.email,
         "avatar_id": user.avatar_id,
         "role": user.role
@@ -168,12 +233,28 @@ def lookup_email_by_username(username: str):
     users_ref = db.collection('Users')
     target_username = username.lower()
     
-    all_users = users_ref.stream()
-    for doc in all_users:
-        user_data = doc.to_dict()
-        if user_data.get('username', '').lower() == target_username:
-            return {"email": user_data.get("email")}
+    # 1. Optimized lookup using normalized field (efficient for new/migrated users)
+    query = users_ref.where("username_lower", "==", target_username).limit(1).get()
+    if len(query) > 0:
+        return {"email": query[0].to_dict().get("email")}
         
+    # 2. Fallback: exact match (for users who haven't migrated but used exact casing)
+    query = users_ref.where("username", "==", username).limit(1).get()
+    if len(query) > 0:
+        user_doc = query[0]
+        # Self-healing: update document with username_lower for next time
+        user_doc.reference.update({"username_lower": target_username})
+        return {"email": user_doc.to_dict().get("email")}
+
+    # 3. Last resort: stream and filter (case-insensitive for old users)
+    # This is a one-time cost per user until they are "self-healed".
+    for doc in users_ref.stream():
+        data = doc.to_dict()
+        if data.get("username", "").lower() == target_username:
+            # Self-healing: update document with username_lower for next time
+            doc.reference.update({"username_lower": target_username})
+            return {"email": data.get("email")}
+            
     raise HTTPException(status_code=404, detail="Username not found")
 
 @app.patch("/users/{user_id}")
@@ -197,13 +278,18 @@ def update_user(user_id: str, update_data: UserUpdate, x_user_id: str = Header(.
         users_ref = db.collection('Users')
         target_username = update_data.username.lower()
         
-        # Manual backend-side check
-        all_users = users_ref.stream()
-        for u in all_users:
-            if u.id != user_id and u.to_dict().get('username', '').lower() == target_username:
+        # Optimized lookup using normalized field for case-insensitive uniqueness check
+        existing_user_query = users_ref.where("username_lower", "==", target_username).limit(1).get()
+        if len(existing_user_query) > 0 and existing_user_query[0].id != user_id:
+            raise HTTPException(status_code=400, detail="Username already exists")
+        
+        # Fallback for existing users who might not have username_lower yet
+        for doc in users_ref.stream():
+            if doc.to_dict().get("username", "").lower() == target_username and doc.id != user_id:
                 raise HTTPException(status_code=400, detail="Username already exists")
         
         update_dict['username'] = update_data.username
+        update_dict['username_lower'] = target_username
 
     # Check for lowercase 'avatar_id'
     if update_data.avatar_id is not None:
@@ -338,3 +424,6 @@ def update_avatar(user_id: str, data: AvatarUpdate, x_user_id: str = Header(...)
 
     doc_ref.update({"avatar_id": data.avatar_id})
     return {"message": "Avatar updated successfully"}
+
+from mangum import Mangum
+handler = Mangum(app, lifespan="off")

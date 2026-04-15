@@ -140,6 +140,9 @@ export function MatchingPage() {
         } else if (response.status === 400) {
           toast.error("You are already in the queue!");
           handleCancelClick();
+        } else if (response.status === 409) {
+          toast.error("You already have an active session. Please end it before starting a new match.");
+          handleCancelClick();
         } else if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
           if (response.status === 401 && errData.detail === 'ACCOUNT_DELETED') {

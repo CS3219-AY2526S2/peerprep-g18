@@ -1,4 +1,4 @@
-version: '3.8'
+version: '4'
 
 services:
   # The Front Door (Public)
@@ -17,6 +17,7 @@ services:
   api-gateway:
     build: ./api-gateway
     container_name: api-gateway
+    command: uvicorn main:app --host 0.0.0.0 --port 1234 --reload
     expose:
       - "1234"
     volumes:
@@ -30,6 +31,11 @@ services:
       - PYTHONUNBUFFERED=1
       - REDIS_SESSIONS_HOST=redis-sessions
       - REDIS_AUTH_HOST=redis-auth
+      - USER_SERVICE_URL=http://user-service:6767
+      - QUESTION_SERVICE_URL=http://question-service:6768
+      - MATCHING_SERVICE_URL=http://matching-service:8001
+      - COLLAB_SERVICE_URL=http://collab-service:4000
+      - HISTORY_SERVICE_URL=http://history-service:6770
 
   # ==========
   # The (Internal) Services
@@ -37,6 +43,7 @@ services:
   user-service:
     build: ./user-service
     container_name: user-service
+    command: uvicorn main:app --host 0.0.0.0 --port 6767 --reload
     expose:
       - "6767"
     volumes:
@@ -61,12 +68,17 @@ services:
       - redis-pubsub
       - history-service
     environment:
+      - PORT=4000
       - REDIS_SESSIONS_HOST=redis-sessions
       - REDIS_PUBSUB_HOST=redis-pubsub
+      - QUESTION_SERVICE_URL=http://question-service:6768
+      - HISTORY_SERVICE_URL=http://history-service:6770
+      - AI_SERVICE_URL=http://ai-service:6771
 
   ai-service:
     build: ./ai-service
     container_name: ai-service
+    command: uvicorn main:app --host 0.0.0.0 --port 6771 --reload
     expose:
       - "6771"
     volumes:
@@ -79,6 +91,7 @@ services:
   question-service:
     build: ./question-service
     container_name: question-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 6768 --reload
     expose:
       - "6768"
     volumes:
@@ -89,18 +102,21 @@ services:
   history-service:
     build: ./history-service
     container_name: history-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 6770 --reload
     expose:
       - "6770"
     volumes:
       - ./history-service:/app
     environment:
       - PYTHONUNBUFFERED=1
+      - QUESTION_SERVICE_URL=http://question-service:6768
+      - USER_SERVICE_URL=http://user-service:6767
 
   matching-service:
     build: ./matching-service
     container_name: matching-service
     expose:
-      - "6769"
+      - "8001"
     volumes:
       - ./matching-service:/app
     depends_on:
@@ -108,6 +124,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_MATCH_HOST=redis-matching
+      - PORT=8001
   
   redis-matching:
     image: redis:7-alpine

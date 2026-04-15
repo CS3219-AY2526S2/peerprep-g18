@@ -2,3 +2,17 @@
 .claude/
 GEMINI.md
 .gemini/
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.log.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# AWS
+.aws/
+credentials

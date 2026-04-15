@@ -1,0 +1,273 @@
+# 1. IAM Role for Lambda Execution
+resource "aws_iam_role" "lambda_exec_role" {
+  name = "peerprep-lambda-exec-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
+
+# Attach basic Lambda VPC execution policy (for logging and networking)
+resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+# Attach basic execution policy for CloudWatch Logs
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Add ECR read permissions (Required for container-based Lambdas)
+resource "aws_iam_role_policy" "lambda_ecr_read" {
+  name = "peerprep-lambda-ecr-read"
+  role = aws_iam_role.lambda_exec_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:BatchCheckLayerAvailability"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+      {
+        Action = "ecr:GetAuthorizationToken"
+        Effect = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Attach our custom Secrets Manager read policy
+resource "aws_iam_role_policy_attachment" "lambda_secrets_read" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = aws_iam_policy.secrets_read_policy.arn
+}
+
+# 2. Security Group for Lambdas
+resource "aws_security_group" "lambda_sg" {
+  name        = "peerprep-lambda-sg"
+  description = "Allow Lambdas to reach Redis and Outbound"
+  vpc_id      = module.vpc.vpc_id
+
+  # No inbound traffic (Lambdas are triggered by API GW)
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# 3. API Gateway (HTTP API Type)
+resource "aws_apigatewayv2_api" "http_api" {
+  name          = "peerprep-api"
+  protocol_type = "HTTP"
+  cors_configuration {
+    allow_origins = [
+      var.frontend_url == "*" ? "*" : var.frontend_url,
+      "http://localhost:5173"
+    ]
+    allow_methods = ["*"]
+    allow_headers = ["content-type", "authorization", "x-amz-date", "x-api-key", "x-amz-security-token"]
+    max_age       = 300
+  }
+}
+
+resource "aws_apigatewayv2_stage" "default" {
+  api_id      = aws_apigatewayv2_api.http_api.id
+  name        = "$default"
+  auto_deploy = true
+}
+
+# 4. Lambda Functions for Microservices
+locals {
+  # Internal services that are called by the Gateway (and each other)
+  internal_lambda_services = {
+    "user-service"     = { port = 8002 }
+    "question-service" = { port = 8003 }
+    "history-service"  = { port = 8004 }
+    "ai-service"       = { port = 8005 }
+  }
+}
+
+# 4.1. Internal Microservices
+resource "aws_lambda_function" "internal_services" {
+  for_each      = local.internal_lambda_services
+  function_name = "peerprep-${each.key}"
+  role          = aws_iam_role.lambda_exec_role.arn
+  package_type  = "Image"
+  image_uri     = "${aws_ecr_repository.service_repos[each.key].repository_url}:latest"
+  timeout       = 30
+  memory_size   = 512
+
+  vpc_config {
+    subnet_ids         = module.vpc.private_subnets
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+
+  environment {
+    variables = {
+      REDIS_SESSIONS_HOST  = aws_elasticache_cluster.redis.cache_nodes[0].address
+      REDIS_AUTH_HOST      = aws_elasticache_cluster.redis.cache_nodes[0].address
+      FRONTEND_URL         = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}"
+      
+      # Cross-service URLs: stateful services are always reachable via the ALB.
+      # history-service also needs QUESTION_SERVICE_URL (Lambda function URL); that is
+      # injected after the function URLs are created by the terraform_data resource below.
+      MATCHING_SERVICE_URL = "http://${aws_lb.main_alb.dns_name}"
+      COLLAB_SERVICE_URL   = "http://${aws_lb.main_alb.dns_name}"
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [image_uri, environment]
+  }
+}
+
+# 4.2. Function URLs for internal microservice communication
+resource "aws_lambda_function_url" "internal_service_urls" {
+  for_each           = local.internal_lambda_services
+  function_name      = aws_lambda_function.internal_services[each.key].function_name
+  authorization_type = "NONE" # Simple for now; secure with IAM in prod
+}
+
+# 4.2a. Post-creation: inject cross-service Lambda function URLs into history-service.
+# history-service calls question-service internally to enrich history records.
+# We cannot reference aws_lambda_function_url.internal_service_urls inside the
+# internal_services for_each block (circular dependency), so we patch the env
+# after both function URLs are available using a local-exec provisioner.
+resource "terraform_data" "history_service_env_update" {
+  triggers_replace = [
+    aws_lambda_function_url.internal_service_urls["question-service"].function_url,
+    aws_lambda_function_url.internal_service_urls["user-service"].function_url,
+  ]
+
+  provisioner "local-exec" {
+    interpreter = ["powershell", "-Command"]
+    command     = "aws lambda update-function-configuration --function-name peerprep-history-service --environment 'Variables={REDIS_SESSIONS_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address},REDIS_AUTH_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address},FRONTEND_URL=https://${aws_cloudfront_distribution.frontend_distribution.domain_name},QUESTION_SERVICE_URL=${aws_lambda_function_url.internal_service_urls["question-service"].function_url},USER_SERVICE_URL=${aws_lambda_function_url.internal_service_urls["user-service"].function_url},MATCHING_SERVICE_URL=http://${aws_lb.main_alb.dns_name},COLLAB_SERVICE_URL=http://${aws_lb.main_alb.dns_name}}' --region ${var.region}"
+  }
+}
+
+# 4.3. API Gateway Lambda (The Entry Point)
+# This depends on the internal service URLs, but since it's a separate resource, 
+# it breaks the cycle.
+resource "aws_lambda_function" "api_gateway" {
+  function_name = "peerprep-api-gateway"
+  role          = aws_iam_role.lambda_exec_role.arn
+  package_type  = "Image"
+  image_uri     = "${aws_ecr_repository.service_repos["api-gateway"].repository_url}:latest"
+  timeout       = 30
+  memory_size   = 512
+
+  vpc_config {
+    subnet_ids         = module.vpc.private_subnets
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+
+  environment {
+    variables = {
+      REDIS_SESSIONS_HOST  = aws_elasticache_cluster.redis.cache_nodes[0].address
+      REDIS_AUTH_HOST      = aws_elasticache_cluster.redis.cache_nodes[0].address
+      FRONTEND_URL         = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}"
+      
+      # The Gateway needs the real URLs
+      USER_SERVICE_URL     = aws_lambda_function_url.internal_service_urls["user-service"].function_url
+      QUESTION_SERVICE_URL = aws_lambda_function_url.internal_service_urls["question-service"].function_url
+      HISTORY_SERVICE_URL  = aws_lambda_function_url.internal_service_urls["history-service"].function_url
+      AI_SERVICE_URL       = aws_lambda_function_url.internal_service_urls["ai-service"].function_url
+      
+      MATCHING_SERVICE_URL = "http://${aws_lb.main_alb.dns_name}"
+      COLLAB_SERVICE_URL   = "http://${aws_lb.main_alb.dns_name}"
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [image_uri, environment]
+  }
+}
+
+# URL for API Gateway (though it's behind HTTP API, it's good practice)
+resource "aws_lambda_function_url" "api_gateway_url" {
+  function_name      = aws_lambda_function.api_gateway.function_name
+  authorization_type = "NONE"
+}
+
+# API Gateway Integration for the API Gateway Lambda (Entry point)
+resource "aws_apigatewayv2_integration" "gateway_integration" {
+  api_id             = aws_apigatewayv2_api.http_api.id
+  integration_type   = "AWS_PROXY"
+  integration_method = "POST"
+  integration_uri    = aws_lambda_function.api_gateway.invoke_arn
+  payload_format_version = "2.0"
+}
+
+# Route EVERYTHING to the API Gateway Lambda
+resource "aws_apigatewayv2_route" "catch_all" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "$default"
+  target    = "integrations/${aws_apigatewayv2_integration.gateway_integration.id}"
+}
+
+# Allow API Gateway to invoke the Gateway Lambda
+resource "aws_lambda_permission" "api_gw_to_gateway" {
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.api_gateway.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+# --- MISSING PERMISSIONS FOR FUNCTION URLs ---
+# These are required because the internal services are called via Function URLs with Auth: NONE
+# AWS requires BOTH lambda:InvokeFunctionUrl and lambda:InvokeFunction for public access to work correctly.
+resource "aws_lambda_permission" "allow_internal_service_invoke_url" {
+  for_each               = local.internal_lambda_services
+  statement_id           = "AllowFunctionUrlInvokeAll-${each.key}"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.internal_services[each.key].function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "allow_internal_service_invoke_function" {
+  for_each               = local.internal_lambda_services
+  statement_id           = "AllowFunctionInvokeAll-${each.key}"
+  action                 = "lambda:InvokeFunction"
+  function_name          = aws_lambda_function.internal_services[each.key].function_name
+  principal              = "*"
+}
+
+resource "aws_lambda_permission" "allow_api_gateway_url_invoke_url" {
+  statement_id           = "AllowFunctionUrlInvokeAll-gateway"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.api_gateway.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "allow_api_gateway_url_invoke_function" {
+  statement_id           = "AllowFunctionInvokeAll-gateway"
+  action                 = "lambda:InvokeFunction"
+  function_name          = aws_lambda_function.api_gateway.function_name
+  principal              = "*"
+}
+
+# 5. Output API Gateway URL
+output "api_gateway_url" {
+  value = aws_apigatewayv2_api.http_api.api_endpoint
+}

@@ -1,10 +1,42 @@
+# AI Assistance Disclosure:
+# Tool: Gemini 3.1 Pro 
+# Scope: Developed the template for the AI Service, which will handle interactions with the Gemini API for content generation. 
+#           This includes setting up environment variable loading from AWS Secrets Manager, defining the API endpoint for 
+#           generation requests, and ensuring proper error handling.
+# Author review: I validated correctness, tested the endpoints via smoke-tests, and ensured the business logic aligns with the project backlog.
+#           I also ensured that the code is not only structured for microservice modularity so that it can easily be ported to a different system,
+#           but also employed prompt engineering techniques to ensure that the Gemini API is used effectively for our use cases.
+
 import os
+import json
+import boto3
 from google import genai
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
 app = FastAPI()
+
+def load_secrets():
+    """Load Backend Env secrets from AWS Secrets Manager."""
+    if os.getenv("GEMINI_API_KEY"):
+        return
+
+    region_name = os.getenv("AWS_REGION", "ap-southeast-1")
+    session = boto3.session.Session()
+    client = session.client(service_name='secretsmanager', region_name=region_name)
+
+    try:
+        resp = client.get_secret_value(SecretId="peerprep/backend-env")
+        env_vars = json.loads(resp['SecretString'])
+        for key, value in env_vars.items():
+            if not os.getenv(key):
+                os.environ[key] = str(value)
+        print("Backend environment variables loaded from Secrets Manager.")
+    except Exception as e:
+        print(f"Note: Could not load peerprep/backend-env from Secrets Manager: {e}")
+
+load_secrets()
 
 # Configure Gemini
 api_key = os.getenv("GEMINI_API_KEY")
@@ -38,6 +70,9 @@ async def generate_response(request: GenerationRequest):
     except Exception as e:
         print(f"Gemini API Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+from mangum import Mangum
+handler = Mangum(app, lifespan="off")
 
 if __name__ == "__main__":
     import uvicorn

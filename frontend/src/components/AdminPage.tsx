@@ -15,6 +15,7 @@ import { GATEWAY_URL } from '../constants';
 import { auth } from '../firebase';
 import { DynamicArrayInput } from './ui/DynamicArrayInput';
 import { QuestionModal } from './ui/QuestionModal'
+import { ConfirmDialog } from './ui/ConfirmDialog';
 import { useUser } from '../contexts/UserContext';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
@@ -58,6 +59,13 @@ export function AdminPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    danger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
   
 
   // Question State
@@ -301,9 +309,20 @@ export function AdminPage() {
     setActiveTab(tab);
   };
 
-  const handleDeleteQuestion = async (questionId: string | number) => {
-    if (!window.confirm('Are you sure you want to delete this question?')) return;
+  const handleDeleteQuestion = (questionId: string | number) => {
+    setConfirmDialog({
+      title: 'Delete Question',
+      message: 'Are you sure you want to delete this question?',
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: () => {
+        setConfirmDialog(null);
+        doDeleteQuestion(questionId);
+      }
+    });
+  };
 
+  const doDeleteQuestion = async (questionId: string | number) => {
     setActionLoading(`delete-q-${questionId}`);
     try {
       const token = localStorage.getItem('peerprep_token');
@@ -328,18 +347,27 @@ export function AdminPage() {
         fetchQuestions(1);
       }
 
-      alert('Question deleted successfully');
       await fetchMetadata();
     } catch (err: unknown) {
-      if (err instanceof Error) alert(err.message);
+      if (err instanceof Error) setError(err.message);
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handlePromote = async (targetUserId: string) => {
-    if (!window.confirm('Are you sure you want to promote this user to Admin?')) return;
-    
+  const handlePromote = (targetUserId: string) => {
+    setConfirmDialog({
+      title: 'Promote User',
+      message: 'Are you sure you want to promote this user to Admin? This is irreversible.',
+      confirmLabel: 'Promote',
+      onConfirm: () => {
+        setConfirmDialog(null);
+        doPromote(targetUserId);
+      }
+    });
+  };
+
+  const doPromote = async (targetUserId: string) => {
     setActionLoading(`promote-${targetUserId}`);
     try {
       const token = localStorage.getItem('peerprep_token');
@@ -350,18 +378,29 @@ export function AdminPage() {
 
       if (await handleAuthError(response)) return;
       if (!response.ok) throw new Error('Failed to promote user');
-      
+
       setUsers(users.map(u => u.user_id === targetUserId ? { ...u, role: 'Admin' } : u));
     } catch (err: unknown) {
-      if (err instanceof Error) alert(err.message);
+      if (err instanceof Error) setError(err.message);
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleDeleteUser = async (targetUserId: string, targetUsername: string) => {
-    if (!window.confirm(`Are you absolutely sure you want to permanently delete @${targetUsername}?`)) return;
-    
+  const handleDeleteUser = (targetUserId: string, targetUsername: string) => {
+    setConfirmDialog({
+      title: 'Delete Account',
+      message: `Are you absolutely sure you want to permanently delete @${targetUsername}? This is irreversible.`,
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: () => {
+        setConfirmDialog(null);
+        doDeleteUser(targetUserId);
+      }
+    });
+  };
+
+  const doDeleteUser = async (targetUserId: string) => {
     setActionLoading(`delete-user-${targetUserId}`);
     try {
       const token = localStorage.getItem('peerprep_token');
@@ -372,13 +411,13 @@ export function AdminPage() {
 
       if (await handleAuthError(response)) return;
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.detail || 'Failed to delete user');
       }
-      
+
       setUsers(users.filter(u => u.user_id !== targetUserId));
     } catch (err: unknown) {
-      if (err instanceof Error) alert(err.message);
+      if (err instanceof Error) setError(err.message);
     } finally {
       setActionLoading(null);
     }
@@ -721,13 +760,23 @@ export function AdminPage() {
         </div>
       </div>
 
-      <QuestionModal 
+      <QuestionModal
         isOpen={modalConfig.isOpen}
         mode={modalConfig.mode}
         initialData={modalConfig.data}
         onClose={() => setModalConfig({ ...modalConfig, isOpen: false })}
         onSuccess={handleModalSuccess}
         topics={availableTopics}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmDialog !== null}
+        title={confirmDialog?.title ?? ''}
+        message={confirmDialog?.message ?? ''}
+        confirmLabel={confirmDialog?.confirmLabel ?? 'Confirm'}
+        danger={confirmDialog?.danger}
+        onConfirm={confirmDialog?.onConfirm ?? (() => {})}
+        onCancel={() => setConfirmDialog(null)}
       />
 
       <style>{`

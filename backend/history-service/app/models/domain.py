@@ -51,15 +51,15 @@ class HistoryBase(BaseModel):
 class HistoryMetadata(BaseModel):
     sessionId: str
     questionId: int
-    title: str
-    topic: str
-    difficulty: str
-    endedAt: datetime
-    submittedBy: str
+    title: Optional[str] = None
+    topic: Optional[str] = None
+    difficulty: Optional[str] = None
+    endedAt: Optional[datetime] = None
+    submittedBy: Optional[str] = None
 
     @field_validator('title', 'topic', 'difficulty', mode='after')
     @classmethod
-    def format_to_title_case(cls, v: str) -> str:
+    def format_to_title_case(cls, v: Optional[str]) -> Optional[str]:
         return v.strip().title() if v else v
 
 class PaginatedHistory(BaseModel):

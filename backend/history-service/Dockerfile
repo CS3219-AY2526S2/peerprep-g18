@@ -21,6 +21,5 @@ COPY . .
 # Expose the port your Question Service uses
 EXPOSE 6770
 
-# Run uvicorn. Note the 'app.main:app' syntax 
-# because main.py is inside the 'app/' folder.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6770", "--reload"]
+# Run Lambda handler
+CMD ["python", "-m", "awslambdaric", "app.main.handler"]

@@ -1,3 +1,8 @@
+// AI Assistance Disclosure:
+// Tool: Claude (Opus 4.6 via Claude Code)
+// Scope: Assisted with the Collaboration Service implementation, including Socket.IO + Yjs CRDT session handling, Redis pub/sub adapter integration, session persistence/restoration logic, Gemini AI hint integration, and CloudFront/WebSocket proxying fixes.
+// Author review: I directed the AI with specific plans and instructions, and it followed my design decisions. I validated correctness, tested the endpoints and real-time collaboration flows, and ensured the business logic aligns with the project backlog.
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -16,12 +21,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ALB Health Check
+app.get('/collab/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+    origin: (origin, callback) => callback(null, true),
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  allowEIO3: true
 });
 
 // Redis client for ticket validation + session persistence
@@ -421,7 +437,8 @@ async function processGeminiCommand(sessionId, prompt, usageKey) {
     if (metaRaw) {
       const meta = JSON.parse(metaRaw);
       try {
-        const qRes = await axios.get(`http://question-service:6768/question/${meta.questionId}`);
+        const targetQuestionService = (process.env.QUESTION_SERVICE_URL || 'http://question-service:6768').replace(/\/$/, '');
+        const qRes = await axios.get(`${targetQuestionService}/question/${meta.questionId}`);
         questionStatement = qRes.data.statement;
       } catch (qErr) {
         console.error('[Gemini] Failed to fetch question statement:', qErr.message);
@@ -449,7 +466,8 @@ ${currentCode}
 
     // 2. Call AI Service
     try {
-      const aiRes = await axios.post('http://ai-service:6771/generate', {
+      const targetAiService = (process.env.AI_SERVICE_URL || 'http://ai-service:6771').replace(/\/$/, '');
+      const aiRes = await axios.post(`${targetAiService}/generate`, {
         prompt: prompt,
         context: contextString
       }, { timeout: 15000 });
@@ -492,7 +510,8 @@ ${currentCode}
  */
 async function hasMeaningfulCode(questionId, finalCode) {
   try {
-    const qRes = await axios.get(`http://question-service:6768/question/${questionId}`);
+    const targetQuestionService = (process.env.QUESTION_SERVICE_URL || 'http://question-service:6768').replace(/\/$/, '');
+    const qRes = await axios.get(`${targetQuestionService}/question/${questionId}`);
     const template = qRes.data.template || '';
     
     // Normalize both for a fairer comparison (trim)
@@ -543,8 +562,8 @@ async function handleUserEnded(sessionId, userId, finalCode) {
     submittedBy: userId
   };
   console.log(`[history] Saving history for ${userId} (session=${sessionId}, question=${meta.questionId})`);
-  await axios.post('http://history-service:6770/history', payload);
-  console.log(`[history] History saved successfully for ${userId} (session=${sessionId})`);
+  const targetHistoryService = (process.env.HISTORY_SERVICE_URL || 'http://history-service:6770').replace(/\/$/, '');
+  await axios.post(`${targetHistoryService}/history/`, payload);
 
   // Only clear the active session pointer if it still refers to this session —
   // the user may have already joined a new session by the time this runs.
@@ -587,7 +606,8 @@ async function handleSessionEnded(sessionId) {
         endedAt: Date.now() / 1000,
         submittedBy: uid
       };
-      await axios.post('http://history-service:6770/history', payload);
+      const targetHistoryService = (process.env.HISTORY_SERVICE_URL || 'http://history-service:6770').replace(/\/$/, '');
+      await axios.post(`${targetHistoryService}/history/`, payload);
       console.log(`[session-cleanup] Catch-up history saved for ${uid} (session=${sessionId})`);
     } else {
       console.log(`[session-cleanup] ${uid} already saved, skipping (session=${sessionId})`);

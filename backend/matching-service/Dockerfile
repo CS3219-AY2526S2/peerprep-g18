@@ -8,5 +8,5 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY . .
 
-# Run on port 6769
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6769"]
+# Run on configurable port, defaulting to 8001 for ECS compatibility
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}"]

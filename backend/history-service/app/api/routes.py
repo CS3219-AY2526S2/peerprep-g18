@@ -1,4 +1,5 @@
 import random
+import os
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query, status, Depends, Body
@@ -12,7 +13,13 @@ from datetime import datetime, timezone
 import httpx
 
 
-http_client = httpx.AsyncClient()
+http_client: httpx.AsyncClient = None
+
+def get_http_client():
+    global http_client
+    if http_client is None or http_client.is_closed:
+        http_client = httpx.AsyncClient()
+    return http_client
 
 # A secure way to get the user-id, ensuring users dont forge this to access others history
 # This code is generated using gemini
@@ -33,17 +40,18 @@ def verify_admin(x_user_role: Optional[str]):
         )
 
 # --- HISTORY ENDPOINTS ---
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def save_history(payload: HistoryBase):
     qn_id = payload.questionId
     start_time_iso = payload.startedAt.isoformat()
 
-    url = f"http://question-service:6768/question/{qn_id}"
+    target_question_service = os.getenv("QUESTION_SERVICE_URL", "http://question-service:6768").rstrip("/")
+    url = f"{target_question_service}/question/{qn_id}"
     params = {"start_time": start_time_iso}
 
     try:
         
-        response = await http_client.get(
+        response = await get_http_client().get(
             url, 
             params=params,
             timeout=5.0
@@ -64,7 +72,6 @@ async def save_history(payload: HistoryBase):
 
     except Exception as e:
         print(f"History Service failed to fetch question: {str(e)}")
-        #Should return here with a failure status code??
     
     doc_id = f"{payload.sessionId}_{payload.submittedBy}"
     db.collection("session_history").document(doc_id).set(payload.model_dump(by_alias=True))

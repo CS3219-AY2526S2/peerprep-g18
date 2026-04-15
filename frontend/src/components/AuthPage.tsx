@@ -71,6 +71,10 @@ export function AuthPage() {
           if (!loginEmail.includes('@')) {
             const lookupRes = await fetch(`${GATEWAY_URL}/users/lookup/${loginEmail}`);
             if (!lookupRes.ok) throw new Error('Username not found');
+            const contentType = lookupRes.headers.get('content-type') ?? '';
+            if (!contentType.includes('application/json')) {
+              throw new Error('Service is warming up, please try again in a moment.');
+            }
             const data = await lookupRes.json();
             loginEmail = data.email;
           }
@@ -90,7 +94,7 @@ export function AuthPage() {
           const res = await fetch(`${GATEWAY_URL}/users/${firebaseUser.uid}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
-          if (res.ok) {
+          if (res.ok && (res.headers.get('content-type') ?? '').includes('application/json')) {
             const profileData = await res.json();
             const isAdmin = profileData.role?.toLowerCase() === 'admin' || profileData.username === 'Root';
             navigate(isAdmin ? '/admin' : '/dashboard', { replace: true });
@@ -113,9 +117,9 @@ export function AuthPage() {
           });
 
           if (!response.ok) {
-            const errorData = await response.json();
+            const errorData = await response.json().catch(() => ({}));
             const detail = errorData.detail;
-            throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+            throw new Error(detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : 'Registration failed. Please try again.');
           }
 
           setRegistrationSuccess(true);

@@ -118,10 +118,10 @@ npx tailwindcss init -p
 
 This frontend’s UI layout and styling were derived from a Figma Make design file (used as a reference during implementation).
 
-> Note that the use of Figma Make is **solely** to help with the UI design component, but the major bulk of the application's interaction with the backend is created independently by our group.
+> Note that the use of Figma Make is **solely** to help with the UI design component, but the major bulk of the application's interaction with the backend is created under seperate workflow.
 
 ### Figma source
-- **Design file:** UI Design Analysis for PeerPrep
+- **Design Reference Used:** [Bill Splitter Mobile App UI UX Design](https://www.behance.net/gallery/126981033/Bill-Splitter-Mobile-App-UI-UX-Design#)
 - **Link:** [Figma Make link](https://www.figma.com/make/HeUvwSyEBHtYqdFQi6u4it/UI-Design-Analysis-for-PeerPrep?t=r06AvxC1qhZ9Yjg8-20&fullscreen=1)
 - **Author/Creator:** Lee Jia Quan, Benny
 - **Changes:** Implemented in React + TypeScript with Tailwind CSS; adapted components, spacing, and colors where needed.
