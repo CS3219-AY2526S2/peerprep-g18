@@ -2,7 +2,7 @@
 !theme plain
 skinparam responseMessageBelowArrow true
 
-title User Service — Sequence Diagram
+title User Service — Sequence Diagram (caa 30 March 2026)
 
 actor Client
 participant "API Gateway" as GW

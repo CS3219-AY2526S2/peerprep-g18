@@ -1,6 +1,6 @@
 # PeerPrep Deployment Q&A Summary (AWS Architecture)
 
-This document summarizes the key architectural decisions and Q&A from the deployment planning session to share with the team.
+This document summarizes the key architectural decisions and Q&A from the deployment planning session.
 
 ---
 

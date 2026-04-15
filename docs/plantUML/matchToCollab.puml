@@ -4,6 +4,8 @@ skinparam Style strictuml
 skinparam MaxMessageSize 250
 skinparam ParticipantPadding 20
 
+title MatchToCollab - Sequence Diagram (caa 6 April 2026)
+
 actor "User A" as UA
 actor "User B" as UB
 participant "Nginx" as NX

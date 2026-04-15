@@ -1,6 +1,6 @@
 # PeerPrep Infrastructure Analysis (AWS Architecture)
 
-This document provides a detailed analysis of the recommended AWS services for each component of the PeerPrep platform, balancing performance, scalability, and cost-efficiency.
+This document provides a detailed analysis of the recommended AWS services decision made by our team, for each component of the PeerPrep platform, balancing performance, scalability, and cost-efficiency.
 
 ## Frontend
 
@@ -21,7 +21,6 @@ This document provides a detailed analysis of the recommended AWS services for e
 ### User Service
 - **Service**: **AWS Lambda** (FastAPI with Mangum)
 - **Rationale**: Previously targeted for AWS App Runner, this service has been migrated to AWS Lambda due to the upcoming deprecation of App Runner in late April 2026. Lambda provides a cost-effective, serverless alternative that scales automatically. To mitigate cold starts for critical auth paths, provisioned concurrency can be utilized if necessary.
-- **Fallback**: Provisioned concurrency if latency requirements are not met by standard Lambda.
 
 ### History Service
 - **Service**: **AWS Lambda**
@@ -29,7 +28,7 @@ This document provides a detailed analysis of the recommended AWS services for e
 
 ### AI Service
 - **Service**: **AWS Lambda**
-- **Rationale**: Assuming it acts as an orchestration layer for external LLM APIs (like Gemini/Bedrock). Lambda's cost-per-execution model is perfect for on-demand AI features.
+- **Rationale**: Lambda's cost-per-execution model is perfect for on-demand AI features.
 
 ## Backend Microservices (Stateful / Long-running)
 
@@ -55,7 +54,7 @@ This document provides a detailed analysis of the recommended AWS services for e
 - **Benefits**: 
   - **Shared Hub**: Offloads session management and ephemeral state from individual services.
   - **Scalability**: While starting with a single node, ElastiCache allows for easy scaling (to larger instances or multi-node) as traffic grows.
-  - **Security**: Placed strictly in **Private Subnets**, accessible only by our microservices via port 6379.
+  - **Security**: Placed strictly in **Private Subnets**, accessible only by our microservices.
 
 ### API Gateway / Routing
 - **Service**: **Amazon API Gateway** + **AWS Lambda** (for the Gateway Microservice)
@@ -64,7 +63,7 @@ This document provides a detailed analysis of the recommended AWS services for e
 ### Secrets Management
 - **Service**: **AWS Secrets Manager**
 - **Rationale**: Securely stores sensitive credentials like Firebase Service Account JSONs and SMTP passwords.
-- **Isolation Strategy**: We use three separate secret containers for our distinct Firebase projects (Main/Auth, History, and Question) to maintain strict microservice isolation and prevent cross-project credential leakage.
+- **Isolation Strategy**: We use four separate secret containers for our distinct project (Main/Auth, History, Question, and .env) to maintain strict microservice isolation and prevent cross-project credential leakage.
 
 ---
 

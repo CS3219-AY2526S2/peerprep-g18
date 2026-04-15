@@ -2,6 +2,8 @@
 skinparam style strictuml
 skinparam sequenceMessageAlign center
 
+title Collab Service - Sequence Diagram (caa 30 March 2026)
+
 actor "User (Browser)" as User
 participant "Frontend" as FE
 box "Infrastructure" #f9f9f9

@@ -2,7 +2,7 @@
 !theme plain
 skinparam responseMessageBelowArrow true
 
-title API Gateway — Sequence Diagram
+title API Gateway — Sequence Diagram (caa 30 March 2026)
 
 actor Client
 participant "API Gateway" as GW

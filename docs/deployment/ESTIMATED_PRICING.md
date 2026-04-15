@@ -54,5 +54,5 @@ For Singapore and Southeast Asia, **Price Class 200** is required for optimal pe
 1.  **Valkey Engine**: Using the Valkey engine for ElastiCache provides the best price-performance in 2026.
 2.  **Graviton2 (ARM)**: Using `t4g` instances and ARM-based Lambda functions saves ~20% compared to x86.
 3.  **CloudFront Price Class 200**: Correctly balanced for the Singapore audience. We avoid the expensive "Price Class All" (South America/Australia) while ensuring local latency is minimal.
-4.  **Single NAT Gateway**: Essential for dev, as multi-AZ would double the ~$43/mo baseline.
-5.  **VPC Endpoints**: (Recommended) Implementing VPC Endpoints for S3/Firestore can bypass NAT processing fees.
+4.  **Single NAT Gateway**: Essential for deployment, as multi-AZ would double the ~$43/mo baseline.
+5.  **VPC Endpoints**: (Recommended) Implementing VPC Endpoints for API Gateway to reduce processing fees.
