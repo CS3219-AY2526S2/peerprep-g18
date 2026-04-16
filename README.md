@@ -6,7 +6,7 @@ Access the Deployed WebApp [here](https://d24b4g6l54npjw.cloudfront.net/)!
 ## Group: G18
 
 ## Group Members:
-- [Lee Jia Quan, Benny](https://github.com/Shamanbenny)
+- [Lee Jia Quan, Benny](https://github.com/Shamanbenny) (Team Lead + Team Coordinator)
 - [Kannan Annamalai](https://github.com/Kannan171)
 - [Heng Yee Chong Fabian](https://github.com/FabianHeng)
 - [Subramanian Pon Harish](https://github.com/Ponharish)
