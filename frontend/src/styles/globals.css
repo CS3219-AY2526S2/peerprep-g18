@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Minimal shadcn-style tokens needed for border-border + future bg/text tokens */
+    --background: 0 0% 100%;
+    --foreground: 222.2 47.4% 11.2%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 215 20.2% 65.1%;
+  }
+
+  .dark {
+    /* Optional: keep if/when you implement dark mode toggling */
+    --background: 224 71% 4%;
+    --foreground: 213 31% 91%;
+
+    --border: 216 34% 17%;
+    --input: 216 34% 17%;
+    --ring: 216 34% 17%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-[#E8E4D9] text-[#2D2838] antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  h1 {
+    @apply text-2xl;
+  }
+  h2 {
+    @apply text-xl;
+  }
+  h3 {
+    @apply text-lg;
+  }
+}
+
+@layer components {
+  .card-purple {
+    @apply bg-[#4A4563] rounded-[32px] p-6 shadow-lg;
+  }
+
+  .card-peach {
+    @apply bg-[#E8B995] rounded-[32px] p-6 shadow-md;
+  }
+
+  .btn-primary {
+    @apply bg-[#4A4563] text-white px-6 py-3 rounded-full font-semibold hover:bg-[#5A5573] transition-all;
+  }
+
+  .btn-secondary {
+    @apply bg-[#E8B995] text-[#4A4563] px-6 py-3 rounded-full font-semibold hover:bg-[#F0C5A5] transition-all;
+  }
+
+  .avatar-circle {
+    @apply w-12 h-12 rounded-full border-2 border-[#E8B995] overflow-hidden;
+  }
+
+  .input-field {
+    @apply bg-[#3A3552] border-none rounded-full px-5 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#E8B995];
+  }
+}

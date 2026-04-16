@@ -1,0 +1,142 @@
+@startuml
+autonumber
+skinparam Style strictuml
+skinparam MaxMessageSize 250
+skinparam ParticipantPadding 20
+
+title MatchToCollab - Sequence Diagram (caa 6 April 2026)
+
+actor "User A" as UA
+actor "User B" as UB
+participant "Nginx" as NX
+box "API Gateway (Auth + Orchestrator)" #LightYellow
+    participant "Gateway" as GW
+end box
+box "Matching Service" #LightBlue
+    participant "Match Router" as MS
+    participant "Match Worker" as MW
+end box
+participant "Question Service" as QS
+participant "Collab Service" as Collab
+database "Redis\n(Matching DB)" as RM
+database "Redis\n(Sessions DB)" as RS
+
+== Phase 1: Matching (Polling-based) ==
+
+UA -> NX: POST /api/matching/find-pair (JWT_A, criteria)
+NX -> GW: Forward (strip /api)
+GW -> GW: Verify JWT_A (uid_A)
+GW -> MS: POST /matching/find-pair (X-User-Id: uid_A)
+MS -> RM: LPUSH incoming_match_queue {uid_A, ticket_id_A, ...}
+MS --> GW: 202 Accepted {ticket_id_A, poll_url}
+GW --> UA: 202 Accepted {ticket_id_A, poll_url}
+
+note over UA, MS: User A attempts to poll for status, but match not found yet
+
+UA -> NX: GET /api/matching/find-pair/status/{ticket_id_A}
+NX -> GW: Forward
+GW -> MS: GET /matching/find-pair/status/{ticket_id_A}
+MS -> RM: GET match_result:{ticket_id_A}
+RM --> MS: null
+MS --> GW: 202 Accepted (pending)
+GW --> UA: 202 Accepted (pending)
+
+note over UA, MS: User B joins the queue some time later...
+
+UB -> NX: POST /api/matching/find-pair (JWT_B, criteria)
+NX -> GW: Forward
+GW -> MS: POST /matching/find-pair (X-User-Id: uid_B)
+MS -> RM: LPUSH incoming_match_queue {uid_B, ticket_id_B, ...}
+MS --> GW: 202 Accepted {ticket_id_B}
+GW --> UB: 202 Accepted {ticket_id_B}
+
+MW -> RM: BRPOP incoming_match_queue
+RM --> MW: {uid_B, ...}
+MW -> MW: Match Found (UA & UB)
+MW -> RM: SETEX match_result:{ticket_id_A} {status: success, peer_id: uid_B, ...}
+MW -> RM: SETEX match_result:{ticket_id_B} {status: success, peer_id: uid_A, ...}
+
+UA -> NX: GET /api/matching/find-pair/status/{ticket_id_A}
+NX -> GW: Forward
+GW -> MS: GET /matching/find-pair/status/{ticket_id_A}
+MS -> RM: GET match_result:{ticket_id_A}
+RM --> MS: {status: success, peer_id: uid_B, ...}
+MS --> GW: 200 OK {match_data}
+GW --> UA: 200 OK {match_data}
+
+UB -> NX: GET /api/matching/find-pair/status/{ticket_id_B}
+NX -> GW: Forward
+GW -> MS: GET /matching/find-pair/status/{ticket_id_B}
+MS -> RM: GET match_result:{ticket_id_B}
+RM --> MS: {status: success, peer_id: uid_A, ...}
+MS --> GW: 200 OK {match_data}
+GW --> UB: 200 OK {match_data}
+
+== Phase 2: Distributed Session Initialization (API Gateway) ==
+
+note over UA, GW
+  Both matched users simultaneously hit the Gateway's /session/init endpoint.
+  The Gateway uses a Redis lock to elect a Leader to provision the room. (Avoids race conditions)
+end note
+
+UA -> NX: POST /api/session/init {peer_id: uid_B, topic, difficulty}
+NX -> GW: Forward
+UB -> NX: POST /api/session/init {peer_id: uid_A, topic, difficulty}
+NX -> GW: Forward
+
+GW -> GW: Generate lock_key = lock:match:{user_min}:{user_max}
+GW -> GW: Generate room_id = UUID
+
+GW -> RS: SETNX lock_key room_id
+RS --> GW: 1 (Leader) or 0 (Follower)
+
+group Leader Logic (e.g., UA's request)
+    GW -> QS: GET /question?topic=X&difficulty=Y
+    QS --> GW: {question_id: "q_101", ...}
+    GW -> RS: SET session:{room_id}:meta {users, questionId, topic, diff, startedAt}
+    GW -> RS: SET active_session:{uid_A} room_id
+    GW -> RS: SET active_session:{uid_B} room_id
+    GW --> UA: 200 OK {room_id}
+end
+
+group Follower Logic (e.g., UB's request)
+    GW -> RS: GET lock_key
+    RS --> GW: room_id
+    GW -> RS: POLL session:{room_id}:meta (until exists)
+    RS --> GW: {meta}
+    GW --> UB: 200 OK {room_id}
+end
+
+== Phase 3: Ticket Acquisition & WebSocket Connection ==
+
+note over UA, GW
+  Users transition to the Collaboration Page.
+  See **docs/plantUML/collab.puml** for detailed Ticket and WS flow.
+end note
+
+UA -> NX: POST /api/collab/join {room_id}
+NX -> GW: Forward
+GW -> Collab: POST /collab/join (X-User-Id: uid_A, room_id)
+Collab --> GW: {ticket: "UUID_1"}
+GW --> UA: {ticket: "UUID_1"}
+
+UA -> NX: WS /socket.io/?ticket=UUID_1
+NX -> Collab: Proxy Upgrade
+
+== Phase 4: Real-time Collaboration ==
+
+group /editor namespace (Yjs Sync)
+    UA -> Collab: yjs-update (binary delta)
+    Collab -> UB: Broadcast yjs-update
+end
+
+group /chat namespace
+    UA -> Collab: send-message ({text})
+    Collab -> UB: Broadcast receive-message
+end
+
+note over Collab
+  Collaboration uses Yjs for editor sync and Socket.io for chat.
+  State is persisted in Redis Sessions DB.
+end note
+@enduml

@@ -1,0 +1,523 @@
+# PeerPrep API Documentation
+
+This document defines the RESTful APIs for the PeerPrep microservices. These APIs are designed to be lightweight and reusable across different systems.
+
+---
+
+## 1. User Service
+**Base URL:** `http://user-service:6767`  
+**Purpose:** Manages user profiles, role-based access control (RBAC), and integrates with Firebase Auth for identity.
+
+### Endpoints
+
+#### `POST /users`
+Create a new user profile and identity. Sends a verification email upon creation.
+- **Request Body:**
+  ```json
+  {
+    "username": "string",
+    "email": "user@example.com",
+    "password": "securepassword123",
+    "confirm_password": "securepassword123",
+    "avatar_id": 1,
+    "role": "User"
+  }
+  ```
+- **Responses:**
+  - `200 OK`: User created successfully. Returns the user profile.
+  - `400 Bad Request`: Username (checked case-insensitively) or Email already exists or passwords don't match.
+  - `500 Internal Server Error`: Firebase Auth or Firestore failure.
+
+#### `GET /users/{user_id}`
+Retrieve a user's profile by their unique ID.
+- **Responses:**
+  - `200 OK`: Returns the user profile object.
+  - `404 Not Found`: User profile does not exist.
+
+#### `GET /users/lookup/{username}`
+Find a user's email by their username (case-insensitive, useful for multi-identifier login).
+- **Responses:**
+  - `200 OK`: `{"email": "user@example.com"}`
+  - `404 Not Found`: Username does not exist.
+
+#### `PATCH /users/{user_id}`
+Update username or password.
+- **Headers:**
+  - `X-User-Id`: (Required) Must match `{user_id}` for authorization.
+- **Request Body (Optional fields):**
+  ```json
+  {
+    "username": "new_username",
+    "password": "new_password",
+    "confirm_password": "new_password"
+  }
+  ```
+- **Responses:**
+  - `200 OK`: Update successful.
+  - `403 Forbidden`: `X-User-Id` does not match `{user_id}`.
+  - `400 Bad Request`: Username already taken (checked case-insensitively) or validation error.
+
+#### `PATCH /users/{user_id}/avatar`
+Update a user's avatar.
+- **Headers:**
+  - `X-User-Id`: (Required) Must match `{user_id}` for authorization.
+- **Request Body:**
+  ```json
+  {
+    "avatar_id": 4271
+  }
+  ```
+- **Responses:**
+  - `200 OK`: `{"message": "Avatar updated successfully"}`
+  - `403 Forbidden`: `X-User-Id` does not match `{user_id}`.
+  - `404 Not Found`: User does not exist.
+
+#### `DELETE /users/{user_id}`
+Permanently delete a user's identity and profile.
+- **Headers:**
+  - `X-User-Id`: (Required) Must match `{user_id}` for authorization.
+- **Responses:**
+  - `200 OK`: Deletion successful.
+  - `403 Forbidden`: Unauthorized.
+  - `404 Not Found`: User does not exist.
+- **Side effects:** Writes `invalidated_user:{user_id}` to `redis-auth`. The API Gateway checks this key on every subsequent request — any token belonging to this user will immediately receive `401 ACCOUNT_DELETED`.
+
+### Admin Endpoints
+
+#### `GET /admin/users`
+Retrieve all user profiles.
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Responses:**
+  - `200 OK`: Returns a list of user profiles.
+  - `403 Forbidden`: Not an admin.
+
+#### `POST /admin/promote/{target_user_id}`
+Promote a user to Admin role.
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Responses:**
+  - `200 OK`: Promotion successful.
+  - `403 Forbidden`: Not an admin.
+  - `404 Not Found`: User does not exist.
+- **Side effects:** Writes `stale_claims:{target_user_id}` (with the current timestamp) to `redis-auth`. The gateway detects this on the promoted user's next request — if their token was issued before the promotion, they receive `403 TOKEN_STALE` and must re-login to get a token with the updated role.
+
+#### `DELETE /admin/users/{user_id}`
+Delete any user account (except Root).
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Responses:**
+  - `200 OK`: Deletion successful.
+  - `403 Forbidden`: Not an admin or trying to delete Root.
+  - `404 Not Found`: User does not exist.
+- **Side effects:** Writes `invalidated_user:{user_id}` to `redis-auth`. Any active token for the deleted user will immediately receive `401 ACCOUNT_DELETED` at the gateway.
+
+---
+
+## 2. API Gateway
+**Base URL:** `http://localhost` (externally) / `http://api-gateway:1234` (internally)  
+**Purpose:** Single entry point for all client requests. Verifies Firebase ID tokens, injects user identity headers, and reverse-proxies to the correct microservice.
+
+### Authentication
+
+All routes except the public routes below require an `Authorization: Bearer <firebase_id_token>` header.
+
+On every authenticated request the gateway:
+1. Verifies the token with Firebase Admin SDK.
+2. Checks `redis-auth` for two conditions:
+   - `invalidated_user:{uid}` exists → `401 ACCOUNT_DELETED` (user was deleted by an admin)
+   - `stale_claims:{uid}` timestamp ≥ token `iat` → `403 TOKEN_STALE` (user was promoted after this token was issued — re-login required)
+3. Injects `X-User-Id` and `X-User-Role` headers before forwarding to the upstream service.
+
+If `redis-auth` is unreachable, the checks are skipped (fail-open) and the request proceeds.
+
+### Public Routes (no token required)
+
+| Method | Path | Forwards to |
+|--------|------|-------------|
+| `POST` | `/users` | User Service |
+| `GET` | `/users/lookup/{username}` | User Service |
+
+### Service Routing
+
+| Path prefix | Upstream service |
+|-------------|-----------------|
+| `/users`, `/admin` | `user-service:6767` |
+| `/question` | `question-service:6768` |
+| `/matching` | `matching-service:6769` |
+| `/collab` | `collab-service:4000` |
+
+### Endpoints
+
+#### `POST /session/init`
+Atomically initialises a collaboration session for two matched users. Both users call this endpoint concurrently after a match is found; a Redis SETNX leader election ensures exactly one session is created.
+
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Request Body:**
+  ```json
+  {
+    "peer_id": "firebase_uid_of_partner",
+    "topic": "Arrays",
+    "difficulty": "Easy"
+  }
+  ```
+- **Responses:**
+  - `200 OK`: `{"room_id": "uuid"}` — same `room_id` returned to both users.
+  - `400 Bad Request`: `peer_id` missing from body.
+  - `401 Unauthorized`: Invalid or missing token.
+
+**Leader flow** (first request wins the SETNX):
+1. Fetches a matching question from Question Service (`topic` + `difficulty`).
+2. Writes session metadata to `redis-sessions`:
+   - `session:{room_id}:meta` — JSON blob with `user1_id`, `user2_id`, `topic`, `difficulty`, `questionId` (2 h TTL)
+   - `active_session:{user1_id}` and `active_session:{user2_id}` → `room_id` (2 h TTL)
+
+**Follower flow** (second request sees the key already set):
+1. Reads `room_id` from the existing lock key.
+2. Polls until the leader has finished writing `session:{room_id}:meta` (up to 10 s).
+
+### Common Gateway Error Responses
+
+| Status | `detail` | Meaning |
+|--------|----------|---------|
+| `401` | `Missing Header` | No `Authorization` header |
+| `401` | `Auth Failed: ...` | Firebase token invalid or expired |
+| `401` | `ACCOUNT_DELETED` | User was deleted by an admin |
+| `403` | `TOKEN_STALE` | User was promoted; re-login to refresh claims |
+| `404` | `Service not found` | Path prefix does not map to any service |
+| `503` | `Target service unavailable` | Upstream microservice is unreachable |
+
+---
+
+## 3. Question Service
+
+**Base URL:** `http://question-service:6768/question`  
+**Purpose:** Manages a repository of technical questions categorized by topic and difficulty.
+
+### Endpoints
+
+#### `GET /`
+Retrieve a random question ID based on topic and difficulty.
+- **Query Parameters:**
+  - `topic`: (Required) e.g., "Array", "String"
+  - `difficulty`: (Required) e.g., "Easy", "Medium", "Hard"
+- **Responses:**
+  - `200 OK`: `{"question_id": "string"}`
+  - `404 Not Found`: No questions match the criteria.
+
+#### `GET /{question_id}`
+Retrieve a specific question by its ID.
+- **Responses:**
+  - `200 OK`: Returns the question details.
+  - `404 Not Found`: Question ID does not exist.
+
+#### `POST /` (Admin Only)
+Add a new question to the repository.
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Request Body:**
+  ```json
+  {
+    "title": "Two Sum",
+    "topic": "Array",
+    "difficulty": "Easy",
+    "description": "Find two numbers that add up to a target...",
+    "hint": "Try using a hash map.",
+    "code_template": "def two_sum(nums, target):"
+  }
+  ```
+- **Responses:**
+  - `201 Created`: Question added successfully.
+  - `403 Forbidden`: Not an admin.
+
+#### `PUT /{question_id}` (Admin Only)
+Update an existing question.
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Request Body (Partial update supported):**
+  ```json
+  {
+    "title": "New Title",
+    "topic": "New Topic"
+  }
+  ```
+- **Responses:**
+  - `200 OK`: Update successful.
+  - `403 Forbidden`: Not an admin.
+  - `404 Not Found`: Question does not exist.
+
+#### `DELETE /{question_id}` (Admin Only)
+Remove a question from the repository.
+- **Headers:**
+  - `X-User-Role`: (Required) Must be `"admin"` or `"root"`.
+- **Responses:**
+  - `204 No Content`: Deletion successful.
+  - `403 Forbidden`: Not an admin.
+  - `404 Not Found`: Question does not exist.
+
+---
+
+## 4. Matching Service
+**Base URL:** `http://matching-service:6769`
+**Purpose:** Pairs two users based on overlapping topic and difficulty preferences. Publishes match events via Redis Pub/Sub. Also owns the SSE stream and session creation logic.
+
+#### `POST /matching/find-pair`
+Enqueue a user to be matched.
+- **Headers:**
+  - `X-User-Id`: (Injected by API Gateway)
+- **Request Body:**
+  ```json
+  {
+    "topic_options": ["Array", "String"],
+    "difficulty_options": ["Easy", "Medium"]
+  }
+  ```
+- **Responses:**
+  - `202 Accepted`: User successfully enqueued or match found immediately.
+  - `400 Bad Request`: User already in queue.
+
+#### `DELETE /matching/cancel-pair`
+Remove a user from the matching queue.
+- **Headers:**
+  - `X-User-Id`: (Injected by API Gateway)
+- **Responses:**
+  - `200 OK`: Successfully removed from queue.
+  - `404 Not Found`: User was not in the queue.
+
+#### `GET /matching/status`
+Poll for matching status. Returns the partner's UID once a match is found.
+- **Headers:**
+  - `X-User-Id`: (Injected by API Gateway)
+- **Responses:**
+  - `200 OK`: `{"status": "matched", "peer_id": "uid", "topic": "Array", "difficulty": "Easy"}`
+  - `200 OK`: `{"status": "waiting"}`
+  - `200 OK`: `{"status": "timeout"}`
+  - `404 Not Found`: User not in matching process.
+
+---
+
+## 5. Collaboration Service
+**Base URL:** `http://collab-service:4000`
+**Purpose:** Real-time collaborative code editing (Yjs CRDT) and chat over Socket.IO. Also serves REST endpoints for session management. Ticket-based authentication — each WebSocket connection requires a one-time ticket obtained via `POST /collab/join`.
+
+### REST Endpoints
+
+These REST endpoints are served by the collaboration service and proxied through the API Gateway (auth injected as `X-User-Id`).
+
+#### `GET /collab/session/{sessionId}`
+Retrieve session metadata. Only accessible by session members.
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Responses:**
+  - `200 OK`:
+    ```json
+    {
+      "sessionId": "uuid",
+      "questionId": "1",
+      "topic": "Strings",
+      "difficulty": "Easy",
+      "user1_id": "uid_A",
+      "user2_id": "uid_B",
+      "startedAt": 1774017000.0,
+      "ai_requests_left": 3
+    }
+    ```
+  - `403 Forbidden`: Not a member of this session.
+  - `404 Not Found`: Session does not exist or has expired.
+
+#### `GET /collab/active-session`
+Get the caller's currently active session ID, if any.
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Responses:**
+  - `200 OK`: `{"sessionId": "uuid"}` or `{"sessionId": null}`
+
+#### `POST /collab/join`
+Issue a one-time WebSocket ticket. Tickets expire after 60 seconds and are single-use. Get one ticket per namespace connection (editor + chat = 2 tickets).
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Request Body:**
+  ```json
+  {
+    "sessionId": "uuid"
+  }
+  ```
+- **Responses:**
+  - `200 OK`: `{"ticket": "one-time-UUID"}`
+  - `400 Bad Request`: Missing sessionId.
+  - `403 Forbidden`: Not a member of this session.
+  - `404 Not Found`: Session does not exist.
+
+#### `POST /collab/end-session/{sessionId}`
+Clear the caller's active-session pointer in Redis. Call this after the user navigates away from the collaboration page.
+- **Headers:**
+  - `Authorization`: (Required) `Bearer <firebase_id_token>`
+- **Responses:**
+  - `200 OK`: `{"detail": "Active session cleared"}`
+  - `403 Forbidden`: Not a member of this session.
+  - `404 Not Found`: Session does not exist.
+
+### WebSocket — Editor Namespace (`/editor`)
+
+Connect via Socket.IO to `http://localhost/editor` with `path: '/socket.io'` and `query: { ticket }`.
+
+Ticket is validated by the collab service on connection. On success, `userId` and `sessionId` are attached to the socket.
+
+#### Client-to-Server Events
+- `yjs-update`: `Uint8Array` — Send local Yjs document changes to the server. The server persists the update and broadcasts to the partner.
+- `end-session`: (no payload) — User explicitly ends the session. Triggers a code snapshot, saves the user's history, and emits `partner-ended` to the other user.
+- `ai-request`: `{ prompt: string }` — Request Gemini assistance. Uses the current `ydoc` content and problem statement as context. Limited to 3 per session.
+
+#### Server-to-Client Events
+- `yjs-sync`: `Uint8Array` — Full document state sent on connect (or reconnect).
+- `yjs-update`: `Uint8Array` — Incremental update from the partner.
+- `user-joined`: `{ userId: string }` — Partner has connected. Also sent to a newly connecting user for each user already in the session.
+- `user-left`: `{ userId: string, message: string }` — Partner has disconnected. A 30-second reconnect window starts; if the partner does not reconnect, `partner-ended` is emitted.
+- `partner-ended`: `{ userId: string }` — Partner has permanently left (either clicked "End Session" or failed to reconnect within 30 seconds). The remaining user is prompted to continue coding solo or end their session.
+- `ai-response`: `{ text: string }` — The response from Gemini.
+- `ai-error`: `{ message: string }` — E.g., "AI request limit reached".
+
+#### Frontend Integration
+```javascript
+import * as Y from 'yjs'
+import { io } from 'socket.io-client'
+
+const ydoc = new Y.Doc()
+const ytext = ydoc.getText('code')
+
+const editorSocket = io('http://localhost/editor', {
+  path: '/socket.io',
+  query: { ticket: '<ticket>' },
+  transports: ['websocket'],
+})
+
+editorSocket.on('yjs-sync', (update) => Y.applyUpdate(ydoc, new Uint8Array(update)))
+editorSocket.on('yjs-update', (update) => Y.applyUpdate(ydoc, new Uint8Array(update), 'remote'))
+ydoc.on('update', (update, origin) => {
+  if (origin !== 'remote') editorSocket.emit('yjs-update', update)
+})
+
+// End session explicitly
+editorSocket.emit('end-session')
+
+// Request AI help
+editorSocket.emit('ai-request', { prompt: "How can I optimize this loop?" })
+
+// Handle partner leaving
+editorSocket.on('partner-ended', () => {
+  // Show modal: "Your partner ended the session. Continue or End?"
+})
+```
+
+The shared text type is `ydoc.getText('code')`. Bind this to your code editor (e.g., `y-monaco` for Monaco, `y-codemirror.next` for CodeMirror).
+
+### WebSocket — Chat Namespace (`/chat`)
+
+Connect via Socket.IO to `http://localhost/chat` with `path: '/socket.io'` and `query: { ticket }`.
+
+#### Client-to-Server Events
+- `send-message`: `{ text: string }` — Send a chat message. HTML tags (`<>`) are stripped server-side.
+
+#### Server-to-Client Events
+- `chat-history`: `[{ sender, text, time }]` — Last 50 messages, sent on connect.
+- `receive-message`: `{ sender: string, text: string, time: string }` — New message from either user. Time format: `"HH:MM"`.
+
+#### Frontend Integration
+```javascript
+const chatSocket = io('http://localhost/chat', {
+  path: '/socket.io',
+  query: { ticket: '<ticket>' },
+  transports: ['websocket'],
+})
+
+chatSocket.on('chat-history', (messages) => { /* render history */ })
+chatSocket.on('receive-message', ({ sender, text, time }) => { /* append */ })
+chatSocket.emit('send-message', { text: 'Hello!' })
+```
+
+### Reconnect Flow
+
+On disconnect, get a new ticket before reconnecting:
+```javascript
+editorSocket.on('disconnect', async () => {
+  const res = await fetch('/api/collab/join', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId })
+  })
+  const { ticket } = await res.json()
+  editorSocket.io.opts.query.ticket = ticket
+  editorSocket.connect()
+})
+```
+
+### Session Lifecycle
+1. Match found → Users poll `/matching/status` and receive partner info.
+2. Both users call `POST /session/init` at the Gateway. Leader election ensures atomic creation.
+3. Both users connect to Collab Service (editor + chat) via tickets.
+4. Real-time collaboration (Yjs + chat + AI).
+5. A user leaves (explicit "End Session" or disconnect):
+   - **Explicit end:** Code is snapshotted immediately and saved as that user's history. `partner-ended` emitted to the other user.
+   - **Disconnect:** 30-second reconnect window. If the user reconnects, session continues normally. If not, treated the same as explicit end (snapshot + save + `partner-ended`).
+6. Remaining user sees a prompt: "Continue coding" or "End session"
+   - **Continue:** User keeps editing solo. Editor + chat remain functional.
+   - **End:** User's code is snapshotted and saved as their own history entry.
+7. When all users have disconnected → 5-second cleanup → Redis keys deleted
+
+Each user gets their own history entry with the code snapshot from when **they** left, stored as `{sessionId}_{userId}` in Firestore.
+
+---
+
+## 6. History Service
+**Base URL:** `http://history-service:6770`
+**Purpose:** Persists completed session records to Firestore. Called internally by the Collaboration Service (`handleUserEnded` / `handleSessionEnded`) after a session ends — not exposed to the frontend directly.
+
+### Endpoints
+
+#### `POST /history`
+Save a session record to Firestore. Each user gets their own entry with their code snapshot.
+- **Request Body:**
+  ```json
+  {
+    "sessionId": "uuid",
+    "user1_id": "uid_A",
+    "user2_id": "uid_B",
+    "questionId": "1",
+    "topic": "Strings",
+    "difficulty": "Easy",
+    "finalCode": "function hello() { return 'world' }",
+    "startedAt": 1774017000.0,
+    "endedAt": 1774020600.0,
+    "submittedBy": "uid_A"
+  }
+  ```
+- **Document ID:** `{sessionId}_{submittedBy}` — each user gets a separate Firestore document with their own `finalCode` snapshot.
+- **Responses:**
+  - `201 Created`: `{"detail": "saved"}`
+
+#### `GET /history/{user_id}`
+Retrieve all session records for a given user.
+- **Responses:**
+  - `200 OK`: Returns an array of session records where the user was either `user1_id` or `user2_id`.
+
+---
+
+## 7. AI Service
+**Base URL:** `http://ai-service:6771`
+**Purpose:** Provides AI-powered assistance using Google's Gemini models. Proxied through the Collaboration Service to handle session context and limits.
+
+### Endpoints
+
+#### `POST /generate`
+Generate a response from the AI model.
+- **Request Body:**
+  ```json
+  {
+    "prompt": "Explain the Two Sum problem.",
+    "context": "The user is working on an Array problem."
+  }
+  ```
+- **Responses:**
+  - `200 OK`: `{"response": "..."}`
+  - `500 Internal Server Error`: Gemini API error or missing configuration.

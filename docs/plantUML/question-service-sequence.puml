@@ -1,0 +1,110 @@
+@startuml Question Service Sequence Diagram
+!theme plain
+skinparam responseMessageBelowArrow true
+
+title Question Service — Sequence Diagram (caa 15 April 2026)
+
+actor Client
+participant "API Gateway" as GW
+participant "Question Service" as QS
+database "Firestore" as FS
+participant "Firebase Auth" as FA
+
+== Get Random Question (GET /question?topic&difficulty) ==
+
+Client -> GW: GET /question?topic=Array&difficulty=Easy\nAuthorization: Bearer <token>
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with user headers
+QS -> QS: Normalize topic & difficulty
+QS -> FS: Query where topic==X AND difficulty==Y\n(select IDs only)
+FS --> QS: Matching question IDs
+QS -> QS: random.choice(ids)
+QS --> Client: 200 {question_id}
+
+== Get Question by ID (GET /question/{id}) ==
+
+Client -> GW: GET /question/42?start_time=2026-04-15\nAuthorization: Bearer <token>
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with user headers
+
+QS -> FS: Get from "questions" collection
+FS --> QS: Question Document
+
+alt Document Exists
+    QS -> QS: Check: !start_time OR last_mod <= start_time
+    alt Valid Version
+        QS --> Client: 200 {question object}
+    else Version Outdated / Not Found
+        QS -> FS: Query "questionsLog" (Where ID=42, mod <= start_time)\nOrder by last_modified DESC Limit 1
+        FS --> QS: Log record
+        alt Log Found
+            QS --> Client: 200 {historic question object}
+        else Not in Logs
+            QS --> Client: 404 Question not found
+        end
+    end
+else Document Does Not Exist
+    QS -> FS: Query "questionsLog" (Where ID=42, mod <= start_time)
+    FS --> QS: Log record
+    alt Log Found
+        QS --> Client: 200 {historic question object}
+    else Not in Logs
+        QS --> Client: 404 Question not found
+    end
+end
+
+== Create Question (POST /question) — Admin ==
+
+Client -> GW: POST /question\nAuthorization: Bearer <token>\n{title, topic, difficulty, statement, template}
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with X-User-Role header
+QS -> QS: Verify admin/root role
+
+group Firestore Transaction [Atomic ID Increment]
+    QS -> FS: Get "current_id" from metadata/question_counter
+    FS --> QS: current_id
+    QS -> QS: new_id = current_id + 1
+    QS -> FS: Update metadata/question_counter with new_id
+end
+
+QS -> QS: Validate body (Pydantic)\nNormalize topic & difficulty\nSet last_modified = now()
+QS -> FS: Set document(new_id) in "questions" collection
+FS --> QS: OK
+QS --> Client: 201 {new question object}
+
+== Update Question (PUT /question/{id}) — Admin ==
+
+Client -> GW: PUT /question/42\nAuthorization: Bearer <token>\n{partial fields}
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with X-User-Role header
+QS -> QS: Verify admin/root role
+QS -> FS: Get existing document (questions collection)
+FS --> QS: doc
+
+alt doc.exists
+    QS -> FS: Add old_data to "questionsLog"
+    QS -> QS: Extract fields & Normalize (Pydantic)\nSet last_modified = now()
+    QS -> FS: Update document (questions collection)
+    FS --> QS: OK
+    QS --> Client: 200 {updated question object}
+else Not Found
+    QS --> Client: 404 Question Not Found
+end
+== Delete Question (DELETE /question/{id}) — Admin ==
+
+Client -> GW: DELETE /question/42\nAuthorization: Bearer <token>
+GW -> FA: verify_id_token(token)
+GW -> QS: Forward with X-User-Role header
+QS -> QS: Verify admin/root role
+QS -> FS: Get document (questions collection)
+FS --> QS: doc
+
+alt doc.exists
+    QS -> FS: Add old_data to "questionsLog"
+    QS -> FS: Delete document (questions collection)
+    FS --> QS: OK
+    QS --> Client: 204 No Content
+else Not Found
+    QS --> Client: 404 Question Not Found
+end
+@enduml

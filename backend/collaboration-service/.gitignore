@@ -1,0 +1,65 @@
+# Environment Variables (if you use them later for other secrets)
+.env
+.env.local
+
+# =========================
+# Python & FastAPI
+# =========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# Pytest / Coverage (if you do automated testing for CI/CD)
+.pytest_cache/
+.coverage
+htmlcov/
+
+# =========================
+# OS & IDE Files
+# =========================
+# Mac# Node modules
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+
+# Coverage
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Editor directories
+.vscode/
+.idea/
+
+# Misc
+*.swp
+.DS_Store
+
+# VS Code / PyCharm
+.vscode/
+.idea/

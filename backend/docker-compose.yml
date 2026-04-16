@@ -1,0 +1,153 @@
+version: '4'
+
+services:
+  # The Front Door (Public)
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gateway
+    restart: always
+
+  # The Bouncer (Internal)
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    command: uvicorn main:app --host 0.0.0.0 --port 1234 --reload
+    expose:
+      - "1234"
+    volumes:
+      - ./api-gateway:/app
+    depends_on:
+      - user-service
+      - question-service
+      - matching-service
+      - collab-service
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_SESSIONS_HOST=redis-sessions
+      - REDIS_AUTH_HOST=redis-auth
+      - USER_SERVICE_URL=http://user-service:6767
+      - QUESTION_SERVICE_URL=http://question-service:6768
+      - MATCHING_SERVICE_URL=http://matching-service:8001
+      - COLLAB_SERVICE_URL=http://collab-service:4000
+      - HISTORY_SERVICE_URL=http://history-service:6770
+
+  # ==========
+  # The (Internal) Services
+  # ==========
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    command: uvicorn main:app --host 0.0.0.0 --port 6767 --reload
+    expose:
+      - "6767"
+    volumes:
+      - ./user-service:/app
+    depends_on:
+      - redis-auth
+    env_file:
+      - ./user-service/.env # Contains SMTP_EMAIL and SMTP_PASSWORD
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_AUTH_HOST=redis-auth
+
+  collab-service:
+    build: ./collaboration-service
+    expose:
+      - "4000"
+    volumes:
+      - ./collaboration-service:/app
+      - /app/node_modules
+    depends_on:
+      - redis-sessions
+      - redis-pubsub
+      - history-service
+    environment:
+      - PORT=4000
+      - REDIS_SESSIONS_HOST=redis-sessions
+      - REDIS_PUBSUB_HOST=redis-pubsub
+      - QUESTION_SERVICE_URL=http://question-service:6768
+      - HISTORY_SERVICE_URL=http://history-service:6770
+      - AI_SERVICE_URL=http://ai-service:6771
+
+  ai-service:
+    build: ./ai-service
+    container_name: ai-service
+    command: uvicorn main:app --host 0.0.0.0 --port 6771 --reload
+    expose:
+      - "6771"
+    volumes:
+      - ./ai-service:/app
+    env_file:
+      - ./ai-service/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  question-service:
+    build: ./question-service
+    container_name: question-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 6768 --reload
+    expose:
+      - "6768"
+    volumes:
+      - ./question-service:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  history-service:
+    build: ./history-service
+    container_name: history-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 6770 --reload
+    expose:
+      - "6770"
+    volumes:
+      - ./history-service:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - QUESTION_SERVICE_URL=http://question-service:6768
+      - USER_SERVICE_URL=http://user-service:6767
+
+  matching-service:
+    build: ./matching-service
+    container_name: matching-service
+    expose:
+      - "8001"
+    volumes:
+      - ./matching-service:/app
+    depends_on:
+      - redis-matching    # User queue
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_MATCH_HOST=redis-matching
+      - PORT=8001
+  
+  redis-matching:
+    image: redis:7-alpine
+    container_name: redis-matching
+    expose:
+      - "6379"
+  
+  redis-sessions:
+    image: redis:7-alpine
+    container_name: redis-sessions
+    expose:
+      - "6379"
+
+  # Auth invalidation store (deleted users, stale claims after promotion)
+  redis-auth:
+    image: redis:7-alpine
+    container_name: redis-auth
+    expose:
+      - "6379"
+
+  # Dedicated pub/sub bus for Socket.IO multi-instance adapter
+  redis-pubsub:
+    image: redis:7-alpine
+    container_name: redis-pubsub
+    expose:
+      - "6379"

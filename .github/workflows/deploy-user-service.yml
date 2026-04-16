@@ -1,0 +1,41 @@
+name: Deploy User Service
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/user-service/**'
+      - '.github/workflows/deploy-user-service.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/peerprep/user-service:latest -t $ECR_REGISTRY/peerprep/user-service:$IMAGE_TAG ./backend/user-service
+          docker push $ECR_REGISTRY/peerprep/user-service:latest
+          docker push $ECR_REGISTRY/peerprep/user-service:$IMAGE_TAG
+
+      - name: Update Lambda Function
+        run: |
+          aws lambda update-function-code \
+            --function-name peerprep-user-service \
+            --image-uri ${{ steps.login-ecr.outputs.registry }}/peerprep/user-service:${{ github.sha }}

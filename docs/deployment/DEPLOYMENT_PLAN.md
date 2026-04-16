@@ -1,0 +1,87 @@
+# PeerPrep Infrastructure Analysis (AWS Architecture)
+
+This document provides a detailed analysis of the recommended AWS services decision made by our team, for each component of the PeerPrep platform, balancing performance, scalability, and cost-efficiency.
+
+## Frontend
+
+### Service: Amazon S3 + Amazon CloudFront
+- **Rationale**: The frontend is a static React application built with Vite. Serving it via S3 (for storage) and CloudFront (for global delivery and HTTPS) is significantly more cost-effective than running a dedicated web server.
+- **Benefits**:
+  - **Scalability**: Handles high traffic without any infrastructure management.
+  - **Performance**: Edge caching via CloudFront ensures low latency for users globally.
+  - **Cost**: Near-zero cost when idle; pay-only-for-bandwidth/storage.
+
+## Backend Microservices (Stateless / Event-driven)
+
+### Question Service
+- **Service**: **AWS Lambda** (FastAPI with Mangum)
+- **Rationale**: Expected low usage and infrequent access patterns. Serverless execution minimizes billing when idle. Cold starts are acceptable here as question loading is a non-critical setup phase of a session.
+- **Horizontal Scaling**: Lambda automatically scales out to handle peaks during user surges.
+
+### User Service
+- **Service**: **AWS Lambda** (FastAPI with Mangum)
+- **Rationale**: Previously targeted for AWS App Runner, this service has been migrated to AWS Lambda due to the upcoming deprecation of App Runner in late April 2026. Lambda provides a cost-effective, serverless alternative that scales automatically. To mitigate cold starts for critical auth paths, provisioned concurrency can be utilized if necessary.
+
+### History Service
+- **Service**: **AWS Lambda**
+- **Rationale**: Similar to Question Service, it performs infrequent CRUD operations (saving at session end, retrieving for profile view). Serverless architecture is ideal for this asynchronous/bursty load.
+
+### AI Service
+- **Service**: **AWS Lambda**
+- **Rationale**: Lambda's cost-per-execution model is perfect for on-demand AI features.
+
+## Backend Microservices (Stateful / Long-running)
+
+### Matching Service
+- **Service**: **AWS ECS**
+- **Rationale**: Matching logic involves long-polling or Server-Sent Events (SSE) to maintain a connection with the user while searching for a peer. It also uses background workers for queue processing. Lambda's 15-minute execution limit and stateless nature make it unsuitable for long-lived matching sessions.
+- **Scaling**: Scales horizontally based on CPU/Memory or custom metrics like pending match count.
+
+### Collaboration Service
+- **Service**: **AWS ECS** (Behind an ALB with WebSockets)
+- **Rationale**: Requires persistent WebSocket connections for real-time document sync (Yjs) and chat. ECS is better suited for stateful connections and provides better control over memory management for the Yjs document state.
+- **Networking**: Application Load Balancer (ALB) supports the necessary sticky sessions (if needed) and WebSocket protocol.
+
+## Data & Infrastructure
+
+### Database (Stick with Firestore)
+- **Service**: **Firestore** for multi-cloud
+
+### Cache & Session State (Redis)
+- **Service**: **Amazon ElastiCache for Redis OSS** (Single Node: `cache.t4g.micro`)
+- **Rationale**: A high-performance, fully managed Redis node acts as a **shared memory layer** for the API Gateway (token invalidation), Matching Service (queues), and Collaboration Service (ticket-based auth).
+- **Cost Optimization**: We consolidate multiple logical Redis instances into a **single-node cluster** to minimize fixed hourly costs.
+- **Benefits**: 
+  - **Shared Hub**: Offloads session management and ephemeral state from individual services.
+  - **Scalability**: While starting with a single node, ElastiCache allows for easy scaling (to larger instances or multi-node) as traffic grows.
+  - **Security**: Placed strictly in **Private Subnets**, accessible only by our microservices.
+
+### API Gateway / Routing
+- **Service**: **Amazon API Gateway** + **AWS Lambda** (for the Gateway Microservice)
+- **Rationale**: Amazon API Gateway handles the public entry point, CORS, and standard routing. The internal `api-gateway` logic (auth token validation, custom routing) should run as a containerized Lambda to handle request throughput efficiently and cost-effectively following the App Runner deprecation.
+
+### Secrets Management
+- **Service**: **AWS Secrets Manager**
+- **Rationale**: Securely stores sensitive credentials like Firebase Service Account JSONs and SMTP passwords.
+- **Isolation Strategy**: We use four separate secret containers for our distinct project (Main/Auth, History, Question, and .env) to maintain strict microservice isolation and prevent cross-project credential leakage.
+
+---
+
+## Architecture Summary Table
+
+| Component | AWS Service | Scaling Mode | Cost Profile |
+|-----------|-------------|--------------|--------------|
+| Frontend | S3 + CloudFront | Automatic | Very Low |
+| Question Service | Lambda | Per-request | Zero-idle |
+| User Service | Lambda | Per-request | Zero-idle |
+| History Service | Lambda | Per-request | Zero-idle |
+| AI Service | Lambda | Per-request | Zero-idle |
+| Matching Service | ECS | Auto-scaling (Task) | Medium |
+| Collaboration Service | ECS | Auto-scaling (Task) | Medium |
+| API Gateway | API GW + Lambda | Managed/Per-request | Low-Medium |
+| Networking | NAT Gateway (x1) | Managed | High |
+| Secrets Manager | AWS Secrets Manager | N/A | Low |
+| Primary Database | Firestore | Multi-cloud | Scalable |
+| Redis Cache | ElastiCache | Node-based | Medium |
+
+*For a detailed breakdown of costs in USD, refer to [ESTIMATED_PRICING.md](./ESTIMATED_PRICING.md).*

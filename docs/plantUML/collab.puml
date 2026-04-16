@@ -1,0 +1,97 @@
+@startuml
+skinparam style strictuml
+skinparam sequenceMessageAlign center
+
+title Collab Service - Sequence Diagram (caa 30 March 2026)
+
+actor "User (Browser)" as User
+participant "Frontend" as FE
+box "Infrastructure" #f9f9f9
+    participant "Nginx" as Nginx
+    participant "API Gateway\n(Auth Proxy)" as GW
+    database "Redis\n(Sessions)" as Redis
+end box
+participant "Collab Service\n(Socket.IO + REST)" as Collab
+
+== Phase 1: Ticket Acquisition ==
+
+User -> FE: Wants to join session
+FE -> Nginx: POST /api/collab/join\n{sessionId}\nAuth: [Firebase Token]
+Nginx -> GW: Forward (strip /api)
+activate GW
+GW -> GW: Validate Firebase Token\n(extract uid, inject X-User-Id)
+GW -> Collab: POST /collab/join\n(X-User-Id: uid, body: {sessionId})
+deactivate GW
+activate Collab
+Collab -> Redis: GET session:{id}:meta
+Redis --> Collab: {user1_id, user2_id, ...}
+Collab -> Collab: Check uid in [user1_id, user2_id]
+Collab -> Redis: SET ticket:{UUID}\n{uid, sessionId} EX 60
+Collab --> GW: 200 OK { ticket: "UUID" }
+deactivate Collab
+GW --> FE: 200 OK { ticket: "UUID" }
+
+note over FE
+  Frontend acquires **two tickets** — one for
+  /editor and one for /chat (separate namespaces).
+end note
+
+== Phase 2: WebSocket Connection (per namespace) ==
+
+FE -> Nginx: WS Upgrade Request\n/socket.io/?ticket=UUID
+activate Nginx
+Nginx -> Collab: Proxy Upgrade\n(plain passthrough, no auth_request)
+activate Collab
+
+Collab -> Collab: Socket.IO middleware:\nextract ticket from query
+
+Collab -> Redis: GETDEL ticket:{UUID}
+Redis --> Collab: {uid, sessionId} or null
+
+alt Ticket Valid
+    Collab -> Collab: Attach userId & sessionId\nto socket object
+    Collab --> FE: HTTP 101 Switching Protocols
+    FE <-> Collab: Authenticated WebSocket
+else Ticket Invalid/Expired/Missing
+    Collab --> FE: Connection rejected\n(Socket.IO error event)
+end
+
+deactivate Collab
+deactivate Nginx
+
+== Phase 3: Editor Namespace — Yjs Sync ==
+
+FE -> Collab: Connected to /editor
+activate Collab
+Collab -> Collab: getOrCreateSession(sessionId)
+Collab -> Redis: LRANGE session:{id}:ydoc 0 -1
+Redis --> Collab: [base64 updates...]
+Collab -> Collab: Replay updates into Y.Doc
+Collab -> FE: emit 'yjs-sync' (full state)
+Collab -> FE: emit 'user-joined' for each\nexisting connected user
+Collab --> Collab: Broadcast 'user-joined'\nto partner in room
+deactivate Collab
+
+== Phase 4: Chat Namespace — History Load ==
+
+FE -> Collab: Connected to /chat
+activate Collab
+Collab -> Redis: LRANGE session:{id}:chat -50 -1
+Redis --> Collab: [last 50 messages]
+Collab -> FE: emit 'chat-history' (messages[])
+deactivate Collab
+
+note over Collab, Redis
+  Design notes:
+  - Ticket issuance: POST /collab/join handled by collab-service
+    (proxied through API Gateway for auth injection).
+  - Ticket validation happens in collab service
+    middleware, not via nginx auth_request
+    (auth_request interferes with WebSocket upgrades).
+  - Each namespace (/editor, /chat) requires
+    its own one-time ticket for connection.
+  - Yjs updates are persisted as base64 in a Redis
+    list and replayed on session load.
+end note
+
+@enduml

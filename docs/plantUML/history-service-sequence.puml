@@ -1,0 +1,33 @@
+@startuml
+!theme plain
+skinparam responseMessageBelowArrow true
+
+title History Service — Sequence Diagram (caa 15 April 2026)
+
+actor Client
+participant "API Gateway" as GW
+participant "History Service" as HS
+participant "Question Service" as QS
+database "Firestore" as FS
+
+== Save Session History (POST /history) ==
+[-> HS: POST /history\n(from Matching Service)
+note right HS: Triggered upon session completion
+
+HS -> QS: GET /question/{id}?start_time={iso_timestamp}
+note right HS: Uses start_time for temporal consistency
+QS --> HS: 200 {Question Data: Title, Topic, Difficulty, etc.}
+
+HS -> HS: Merge question data into History Payload
+HS -> FS: Set doc "session_history/{sessionID}_{userID}"
+FS --> HS: OK
+
+group Update User Analytics
+    HS -> FS: Increment total_attempts\nArrayUnion used_topics & used_difficulties
+    FS --> HS: OK
+end
+[<-- HS: 201 {"detail": "saved"}
+
+
+
+@enduml
